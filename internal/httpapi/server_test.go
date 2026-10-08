@@ -165,6 +165,14 @@ func TestCreateAndUpdateWatch(t *testing.T) {
 	default:
 	}
 
+	stored, err := store.GetWatch(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "Львів" {
+		t.Fatalf("name %s", stored.Name)
+	}
+
 	res, err := http.Post(api.URL+"/api/watches", "application/json", strings.NewReader(`{"city":" ","properties":["apartment"]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +180,70 @@ func TestCreateAndUpdateWatch(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusBadRequest {
 		t.Fatalf("blank city %d", res.StatusCode)
+	}
+}
+
+func TestCityChangeClearsPreviousFeed(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "place.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.EnsureSource(ctx, domain.Source{
+		ID: "lun", Type: "lun", Enabled: true, Status: domain.SourceHealthy, Configuration: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	watch, err := store.CreateWatch(ctx, domain.Watch{
+		Name: "Кам'янець-Подільський", Enabled: true, SourceIDs: []string{source.ID},
+		Query:        domain.Query{City: "Кам'янець-Подільський", Deal: domain.DealRent, Properties: []string{domain.PropertyApartment}},
+		PollInterval: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	listingID := id.New()
+	if err := store.SavePoll(ctx, sqlite.PollWrite{
+		Run: domain.Run{
+			ID: id.New(), WatchID: watch.ID, SourceID: source.ID, SourceType: source.Type,
+			StartedAt: now, FinishedAt: now,
+		},
+		Source: source,
+		Listings: []sqlite.ListingUpsert{{Insert: true, Listing: domain.Listing{
+			ID: listingID, Source: source.ID, ExternalID: "1", URL: "https://example.test/1",
+			Location:    domain.Location{Name: "Кам'янець-Подільський"},
+			FirstSeenAt: now, LastSeenAt: now, RawData: []byte(`{}`),
+		}}},
+		Matches: []domain.Match{{
+			WatchID: watch.ID, ListingID: listingID, Status: domain.MatchMatched, UpdatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer((&Server{Store: store}).Handler())
+	t.Cleanup(api.Close)
+
+	sendJSON(t, http.MethodPatch, api.URL+"/api/watches/"+watch.ID, map[string]any{
+		"city": "Київ", "properties": []string{"apartment"}, "enabled": true,
+	}, http.StatusOK, nil)
+
+	var feed feedBody
+	get(t, api.URL+"/api/listings", &feed)
+	if len(feed.Items) != 0 {
+		t.Fatalf("old city stayed in the feed: %+v", feed.Items)
+	}
+	stored, err := store.GetWatch(ctx, watch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Query.City != "Київ" || stored.Name != "Київ" {
+		t.Fatalf("watch %+v", stored)
 	}
 }
 

@@ -14,21 +14,19 @@ import (
 )
 
 type card struct {
-	ID         int64     `json:"id"`
-	URLRaw     string    `json:"urlRaw"`
-	Price      *float64  `json:"price"`
-	Currency   string    `json:"currency"`
-	RoomCount  *float64  `json:"roomCount"`
-	AreaTotal  *float64  `json:"areaTotal"`
-	Floor      *float64  `json:"floor"`
-	FloorCount *float64  `json:"floorCount"`
-	Location   []float64 `json:"location"`
-	Text       string    `json:"text"`
-	Header     string    `json:"header"`
-	InsertTime string    `json:"insertTime"`
-	Images     []struct {
-		ImageID int64 `json:"imageId"`
-	} `json:"images"`
+	ID          int64      `json:"id"`
+	URLRaw      string     `json:"urlRaw"`
+	Price       *float64   `json:"price"`
+	Currency    string     `json:"currency"`
+	RoomCount   *float64   `json:"roomCount"`
+	AreaTotal   *float64   `json:"areaTotal"`
+	Floor       *float64   `json:"floor"`
+	FloorCount  *float64   `json:"floorCount"`
+	Location    []float64  `json:"location"`
+	Text        string     `json:"text"`
+	Header      string     `json:"header"`
+	InsertTime  string     `json:"insertTime"`
+	Images      []imageRef `json:"images"`
 	GeoEntities []struct {
 		Type string `json:"type"`
 		Name string `json:"name"`
@@ -137,13 +135,41 @@ func addressOf(card card) (city, address string) {
 	return city, address
 }
 
+type imageRef struct {
+	ImageID imageID `json:"imageId"`
+}
+
+// imageID is either a legacy numeric id or a path such as offers/1878464294220183.
+type imageID string
+
+func (n *imageID) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		*n = imageID(strings.TrimSpace(asString))
+		return nil
+	}
+	var asInt int64
+	if err := json.Unmarshal(data, &asInt); err != nil {
+		return err
+	}
+	if asInt <= 0 {
+		return nil
+	}
+	*n = imageID(strconv.FormatInt(asInt, 10))
+	return nil
+}
+
 func imageURLs(card card) []string {
 	urls := make([]string, 0, len(card.Images))
 	for _, image := range card.Images {
-		if image.ImageID <= 0 {
+		id := strings.Trim(string(image.ImageID), "/")
+		if id == "" || id == "0" || strings.Contains(id, "..") || strings.Contains(id, "://") {
 			continue
 		}
-		urls = append(urls, fmt.Sprintf("https://market-images.lunstatic.net/lun-ua/1200/1200/images/%d.jpg", image.ImageID))
+		urls = append(urls, "https://market-images.lunstatic.net/lun-ua/1200/1200/images/"+id+".jpg")
 	}
 	return urls
 }

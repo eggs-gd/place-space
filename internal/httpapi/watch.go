@@ -80,6 +80,12 @@ func (s *Server) updateWatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if queryChanged(current.Query, updated.Query) {
+		if err := s.Store.ClearMatches(r.Context(), updated.ID); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	s.refresh(updated)
 	writeJSON(w, http.StatusOK, watchBody(updated))
 }
@@ -126,7 +132,6 @@ func applyCriteria(watch domain.Watch, body criteriaBody, creating bool) (domain
 		return domain.Watch{}, err
 	}
 	if creating {
-		watch.Name = city
 		if watch.Query.Deal == "" {
 			watch.Query.Deal = domain.DealRent
 		}
@@ -134,6 +139,9 @@ func applyCriteria(watch domain.Watch, body criteriaBody, creating bool) (domain
 			watch.PollInterval = defaultPollInterval
 		}
 		watch.Enabled = true
+	}
+	if creating || strings.TrimSpace(watch.Name) == "" || strings.TrimSpace(watch.Name) == strings.TrimSpace(watch.Query.City) {
+		watch.Name = city
 	}
 	if body.Enabled != nil {
 		watch.Enabled = *body.Enabled
@@ -145,6 +153,26 @@ func applyCriteria(watch domain.Watch, body criteriaBody, creating bool) (domain
 	watch.Filters.RoomsMin = body.RoomsMin
 	watch.Filters.AreaMin = body.AreaMin
 	return watch, nil
+}
+
+func queryChanged(before, after domain.Query) bool {
+	if strings.TrimSpace(before.City) != strings.TrimSpace(after.City) || before.Deal != after.Deal {
+		return true
+	}
+	if len(before.Properties) != len(after.Properties) {
+		return true
+	}
+	seen := make(map[string]int, len(before.Properties))
+	for _, value := range before.Properties {
+		seen[value]++
+	}
+	for _, value := range after.Properties {
+		seen[value]--
+		if seen[value] < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func propertiesOf(values []string) ([]string, error) {

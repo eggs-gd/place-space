@@ -106,6 +106,15 @@ func (s *Store) UpdateWatch(ctx context.Context, watch domain.Watch) error {
 	return tx.Commit()
 }
 
+// ClearMatches drops decisions for a watch. Listings and their history stay.
+// A new city is a different search, so the previous feed must not remain.
+func (s *Store) ClearMatches(ctx context.Context, watchID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM matches WHERE watch_id = ?`, watchID); err != nil {
+		return fmt.Errorf("clear matches: %w", err)
+	}
+	return nil
+}
+
 // DeleteWatch removes the watch. Listings stay.
 func (s *Store) DeleteWatch(ctx context.Context, watchID string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM watches WHERE id = ?`, watchID)

@@ -68,6 +68,18 @@ func TestNormalizeCard(t *testing.T) {
 	}
 }
 
+func TestNormalizeAcceptsOfferImagePath(t *testing.T) {
+	payload := []byte(`{"id": 9, "urlRaw": "https://lun.ua/uk/realty/9", "images": [{"imageId": "offers/1878464294220183"}, {"imageId": "../secret"}, {"imageId": 0}]}`)
+	listing, err := New(Options{}).Normalize(context.Background(), sources.RawListing{Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://market-images.lunstatic.net/lun-ua/1200/1200/images/offers/1878464294220183.jpg"
+	if len(listing.Images) != 1 || listing.Images[0] != want {
+		t.Fatalf("images %#v", listing.Images)
+	}
+}
+
 func TestNormalizeDropsZeroAndMissing(t *testing.T) {
 	payload := []byte(`{"id": 7, "urlRaw": "https://lun.ua/uk/realty/7", "price": 0, "roomCount": 0, "areaTotal": null}`)
 	listing, err := New(Options{}).Normalize(context.Background(), sources.RawListing{Payload: payload})
