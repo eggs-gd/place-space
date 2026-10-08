@@ -1,0 +1,9 @@
+{
+	"name": "Place Space",
+	"short_name": "Place Space",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#f5f5f7",
+	"theme_color": "#f5f5f7",
+	"lang": "uk"
+}
