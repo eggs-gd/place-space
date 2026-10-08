@@ -11,10 +11,11 @@ type errorBody struct {
 }
 
 type overviewBody struct {
-	Watch   *watchJSON  `json:"watch"`
-	Summary summaryBody `json:"summary"`
-	Source  *sourceJSON `json:"source"`
-	Run     *runJSON    `json:"run"`
+	Watch   *watchJSON   `json:"watch"`
+	Summary summaryBody  `json:"summary"`
+	Source  *sourceJSON  `json:"source"`
+	Sources []sourceJSON `json:"sources"`
+	Run     *runJSON     `json:"run"`
 }
 
 type summaryBody struct {

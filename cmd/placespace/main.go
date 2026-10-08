@@ -19,6 +19,7 @@ import (
 	"github.com/eggs-gd/place-space/internal/domain"
 	"github.com/eggs-gd/place-space/internal/scheduler"
 	"github.com/eggs-gd/place-space/internal/sources"
+	"github.com/eggs-gd/place-space/internal/sources/domria"
 	"github.com/eggs-gd/place-space/internal/sources/lun"
 	"github.com/eggs-gd/place-space/internal/storage/sqlite"
 )
@@ -111,20 +112,14 @@ func cmdPoll(args []string) error {
 	}
 	defer store.Close()
 
-	source, err := store.EnsureSource(ctx, domain.Source{
-		ID:            "lun",
-		Type:          "lun",
-		Enabled:       true,
-		Status:        domain.SourceUnknown,
-		Configuration: json.RawMessage(`{}`),
-	})
+	sourceIDs, err := application.EnsureDefaultSources(ctx, store)
 	if err != nil {
 		return err
 	}
 	watch := domain.Watch{
 		Name:         *name,
 		Enabled:      true,
-		SourceIDs:    []string{source.ID},
+		SourceIDs:    sourceIDs,
 		Query:        domain.Query{City: *city, Deal: *deal, Properties: properties},
 		Filters:      domain.Filters{PriceMin: priceMin.value, PriceMax: priceMax.value, Currency: *currency, RoomsMin: roomsMin.value, AreaMin: areaMin.value},
 		PollInterval: *interval,
@@ -146,14 +141,7 @@ func cmdPoll(args []string) error {
 		}
 	}
 
-	pipeline := &application.Pipeline{
-		Store: store,
-		Adapters: map[string]sources.Adapter{
-			"lun": lun.New(lun.Options{MaxPages: *pages}),
-		},
-		Log: slog.Default(),
-	}
-	report, err := pipeline.PollWatch(ctx, watch)
+	report, err := newPipeline(store, *pages).PollWatch(ctx, watch)
 	if err != nil {
 		return err
 	}
@@ -188,7 +176,8 @@ func newPipeline(store *sqlite.Store, pages int) *application.Pipeline {
 	return &application.Pipeline{
 		Store: store,
 		Adapters: map[string]sources.Adapter{
-			"lun": lun.New(lun.Options{MaxPages: pages}),
+			"lun":    lun.New(lun.Options{MaxPages: pages}),
+			"domria": domria.New(domria.Options{MaxPages: pages}),
 		},
 		Log: slog.Default(),
 	}
@@ -216,6 +205,9 @@ func refreshWatch(store *sqlite.Store, pages int, watchID string) {
 }
 
 func pollLoop(ctx context.Context, store *sqlite.Store, pages int) error {
+	if _, err := application.EnsureDefaultSources(ctx, store); err != nil {
+		return err
+	}
 	watches, err := store.ListWatches(ctx)
 	if err != nil {
 		return err

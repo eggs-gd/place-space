@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eggs-gd/place-space/internal/application"
 	"github.com/eggs-gd/place-space/internal/domain"
 	"github.com/eggs-gd/place-space/internal/storage/sqlite"
 )
@@ -37,18 +38,12 @@ func (s *Server) createWatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
 		return
 	}
-	source, err := s.Store.EnsureSource(r.Context(), domain.Source{
-		ID:            "lun",
-		Type:          "lun",
-		Enabled:       true,
-		Status:        domain.SourceUnknown,
-		Configuration: json.RawMessage(`{}`),
-	})
+	sourceIDs, err := application.EnsureDefaultSources(r.Context(), s.Store)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	watch.SourceIDs = []string{source.ID}
+	watch.SourceIDs = sourceIDs
 	watch, err = s.Store.CreateWatch(r.Context(), watch)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {

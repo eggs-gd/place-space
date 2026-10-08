@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/eggs-gd/place-space/internal/domain"
@@ -157,23 +158,32 @@ func (s *Server) buildOverview(ctx context.Context, watch domain.Watch) (overvie
 			fresh++
 		}
 	}
-	var sourceBody *sourceJSON
-	if len(watch.SourceIDs) > 0 {
-		source, err := s.Store.GetSource(ctx, watch.SourceIDs[0])
-		if err == nil {
-			view := sourceJSON{
-				ID:            source.ID,
-				Type:          source.Type,
-				Enabled:       source.Enabled,
-				Status:        source.Status,
-				LastSuccessAt: source.LastSuccessAt,
-				LastErrorAt:   source.LastErrorAt,
-				LastError:     source.LastError,
-			}
-			sourceBody = &view
-		} else if !errors.Is(err, sqlite.ErrNotFound) {
+	sources := make([]sourceJSON, 0, len(watch.SourceIDs))
+	for _, sourceID := range watch.SourceIDs {
+		source, err := s.Store.GetSource(ctx, sourceID)
+		if errors.Is(err, sqlite.ErrNotFound) {
+			continue
+		}
+		if err != nil {
 			return overviewBody{}, err
 		}
+		sources = append(sources, sourceJSON{
+			ID:            source.ID,
+			Type:          source.Type,
+			Enabled:       source.Enabled,
+			Status:        source.Status,
+			LastSuccessAt: source.LastSuccessAt,
+			LastErrorAt:   source.LastErrorAt,
+			LastError:     source.LastError,
+		})
+	}
+	slices.SortStableFunc(sources, func(a, b sourceJSON) int {
+		return sourceOrder(a.Type) - sourceOrder(b.Type)
+	})
+	var sourceBody *sourceJSON
+	if len(sources) > 0 {
+		first := sources[0]
+		sourceBody = &first
 	}
 	var runBody *runJSON
 	run, ok, err := s.Store.LatestRun(ctx, watch.ID)
@@ -205,6 +215,7 @@ func (s *Server) buildOverview(ctx context.Context, watch domain.Watch) (overvie
 		Watch:   &body,
 		Summary: summaryBody{Places: matched, New: fresh, Rejected: rejected},
 		Source:  sourceBody,
+		Sources: sources,
 		Run:     runBody,
 	}, nil
 }
@@ -272,6 +283,17 @@ func cardFrom(row sqlite.FeedRow, now time.Time) cardBody {
 		IsNew:       isNew(listing.FirstSeenAt, now),
 		Status:      row.Match.Status,
 		Reasons:     reasons,
+	}
+}
+
+func sourceOrder(sourceType string) int {
+	switch sourceType {
+	case "lun":
+		return 0
+	case "domria":
+		return 1
+	default:
+		return 2
 	}
 }
 

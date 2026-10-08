@@ -8,7 +8,20 @@
 	let { data }: { data: PageData } = $props();
 
 	const watch = $derived(data.overview.watch);
-	const source = $derived(data.overview.source);
+	const sources = $derived(
+		data.overview.sources?.length
+			? data.overview.sources
+			: data.overview.source
+				? [data.overview.source]
+				: []
+	);
+	const sourceState = $derived(
+		sources.some((item) => item.status === 'error')
+			? 'error'
+			: sources.some((item) => item.status === 'healthy')
+				? 'healthy'
+				: ''
+	);
 	const run = $derived(data.overview.run);
 
 	let editing = $state(false);
@@ -125,7 +138,7 @@
 	<h1>{watch?.city || watch?.name || 'Новий пошук'}</h1>
 	{#if watch}
 		<p class="watching">
-			<span class="dot" class:live={watch.enabled && source?.status === 'healthy'} class:bad={source?.status === 'error'}></span>
+			<span class="dot" class:live={watch.enabled && sourceState === 'healthy'} class:bad={sourceState === 'error'}></span>
 			{watch.enabled ? 'Стежить' : 'Зупинено'}
 		</p>
 	{/if}
@@ -168,20 +181,26 @@
 	{#if notice}
 		<p class="note" role="status">{notice}</p>
 	{/if}
-	<p class="note">Порожнє поле означає, що цієї межі немає. Місто може бути шляхом LUN, наприклад /rent/kyiv/flats.</p>
+	<p class="note">
+		Порожнє поле означає, що цієї межі немає. Місто може бути шляхом джерела: для LUN
+		<code>/rent/kyiv/flats</code>, для DOM.RIA <code>/uk/arenda-kvartir/kiev/</code>.
+	</p>
 </form>
 
 {#if watch}
 	<section class="panel">
-		<h2>Джерело</h2>
-		{#if source}
-			<p class="watching">
-				<span class="dot" class:live={source.status === 'healthy'} class:bad={source.status === 'error'}></span>
-				{sourceName(source.type)} · {sourceStatus(source.status)}
-			</p>
-			{#if source.lastError}
-				<p class="note">{source.lastError}</p>
-			{/if}
+		<h2>Джерела</h2>
+		{#if sources.length}
+			{#each sources as source (source.id)}
+				<p class="watching">
+					<span class="dot" class:live={source.status === 'healthy'} class:bad={source.status === 'error'}
+					></span>
+					{sourceName(source.type)} · {sourceStatus(source.status)}
+				</p>
+				{#if source.lastError}
+					<p class="note">{source.lastError}</p>
+				{/if}
+			{/each}
 		{:else}
 			<p class="note">Джерело не підключене.</p>
 		{/if}

@@ -92,6 +92,7 @@ export type Overview = {
 	watch: Watch | null;
 	summary: { places: number; new: number; rejected: number };
 	source: Source | null;
+	sources: Source[];
 	run: Run | null;
 };
 
