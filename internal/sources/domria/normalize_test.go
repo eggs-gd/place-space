@@ -51,11 +51,38 @@ func TestNormalizeCard(t *testing.T) {
 	if listing.Location.Latitude == nil || *listing.Location.Longitude != 26.9409804 {
 		t.Fatalf("coordinates %+v", listing.Location)
 	}
-	if len(listing.Images) != 1 || listing.Images[0] != "https://cdn.riastatic.com/photos/dom/photo/1.jpg" {
+	if len(listing.Images) != 1 || listing.Images[0] != "https://cdn.riastatic.com/photos/dom/photo/1xl.jpg" {
 		t.Fatalf("images %v", listing.Images)
 	}
 	if listing.PublishedAt == nil || !listing.PublishedAt.Equal(time.Date(2026, 10, 7, 13, 2, 56, 0, time.UTC)) {
 		t.Fatalf("published %v", listing.PublishedAt)
+	}
+}
+
+func TestDisplayPhotoUsesLargeSize(t *testing.T) {
+	payload := []byte(`{
+		"realty_id": 34397832,
+		"beautiful_url": "realty-example.html",
+		"photos": [
+			{"file": "dom/photo/33628/3362898/336289840/336289840.jpg"},
+			{"file": "https://cdn.riastatic.com/photos/dom/photo/33628/3362898/336289840/336289840b.jpg"}
+		]
+	}`)
+	listing, err := New(Options{}).Normalize(context.Background(), sources.RawListing{Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"https://cdn.riastatic.com/photos/dom/photo/33628/3362898/336289840/336289840xl.jpg",
+		"https://cdn.riastatic.com/photos/dom/photo/33628/3362898/336289840/336289840b.jpg",
+	}
+	if len(listing.Images) != len(want) {
+		t.Fatalf("images %v", listing.Images)
+	}
+	for i := range want {
+		if listing.Images[i] != want[i] {
+			t.Fatalf("images %v", listing.Images)
+		}
 	}
 }
 

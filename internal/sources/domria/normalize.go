@@ -156,6 +156,7 @@ func imageURLs(card card) []string {
 		if file == "" {
 			continue
 		}
+		file = displayPhoto(file)
 		var raw string
 		if strings.HasPrefix(file, "http://") || strings.HasPrefix(file, "https://") {
 			raw = file
@@ -169,6 +170,42 @@ func imageURLs(card card) []string {
 		urls = append(urls, raw)
 	}
 	return urls
+}
+
+// displayPhoto adds the large size the CDN actually serves. A bare id such as
+// 336289840.jpg answers 404; 336289840xl.jpg is the file. A name that already
+// has a size letter, like 336289840b.jpg, stays as published.
+func displayPhoto(file string) string {
+	path, query := file, ""
+	if i := strings.Index(path, "?"); i >= 0 {
+		query = path[i:]
+		path = path[:i]
+	}
+	slash := strings.LastIndex(path, "/")
+	name := path[slash+1:]
+	dot := strings.LastIndex(name, ".")
+	if dot <= 0 {
+		return file
+	}
+	stem, ext := name[:dot], strings.ToLower(name[dot:])
+	switch ext {
+	case ".jpg", ".jpeg", ".webp":
+	default:
+		return file
+	}
+	if stem == "" || !allDigits(stem) {
+		return file
+	}
+	return path[:slash+1] + stem + "xl" + name[dot:] + query
+}
+
+func allDigits(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func coordinates(lat, lng *float64) (float64, float64, bool) {
