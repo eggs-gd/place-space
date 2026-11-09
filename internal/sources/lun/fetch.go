@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,10 @@ import (
 	"github.com/eggs-gd/place-space/internal/domain"
 	"github.com/eggs-gd/place-space/internal/sources"
 )
+
+// catalogPath is the only shape of path requested from LUN. City and area
+// paths can come from a person or from a scraped page.
+var catalogPath = regexp.MustCompile(`^/rent(/[a-z0-9-]+)+$`)
 
 const (
 	maxBody = 8 << 20
@@ -127,11 +132,8 @@ func (a *Adapter) cityPath(city string) (string, error) {
 }
 
 func cleanPath(path string) (string, error) {
-	if strings.Contains(path, "..") || strings.Contains(path, "://") || strings.Contains(path, "?") {
-		return "", fmt.Errorf("lun: invalid search path %q", path)
-	}
-	if !strings.HasPrefix(path, "/rent/") {
-		return "", fmt.Errorf("lun: search path %q must start with /rent/", path)
+	if !catalogPath.MatchString(path) {
+		return "", fmt.Errorf("lun: invalid search path %q; it must look like /rent/kyiv/flats", path)
 	}
 	return path, nil
 }
@@ -156,6 +158,9 @@ func (a *Adapter) fetchPath(ctx context.Context, path target, seen map[string]st
 		pageSize int
 		errs     []error
 		sorted   = true
+		// catalog tracks this catalog alone. seen spans every catalog of the
+		// poll, so overlapping areas must not read as a repeated page.
+		catalog = map[string]struct{}{}
 	)
 	for page := 1; page <= a.maxPages; page++ {
 		if page > 1 && a.pause > 0 {
@@ -192,14 +197,18 @@ func (a *Adapter) fetchPath(ctx context.Context, path target, seen map[string]st
 				continue
 			}
 			externalID := strconv.FormatInt(card.ID, 10)
+			if _, ok := catalog[externalID]; ok {
+				continue
+			}
+			catalog[externalID] = struct{}{}
+			added++
 			if _, ok := seen[externalID]; ok {
 				continue
 			}
 			seen[externalID] = struct{}{}
 			out = append(out, sources.RawListing{ExternalID: externalID, Payload: raw})
-			added++
 		}
-		if added == 0 || (pageSize > 0 && len(cards) < pageSize) || (total > 0 && len(out) >= total) {
+		if added == 0 || (pageSize > 0 && len(cards) < pageSize) || (total > 0 && len(catalog) >= total) {
 			break
 		}
 	}

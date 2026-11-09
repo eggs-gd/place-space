@@ -134,6 +134,48 @@ func TestDirectoryKeepsSavedAreasWhenRereadFails(t *testing.T) {
 	}
 }
 
+func TestDirectoryKeepsAreasALaterScanDidNotSee(t *testing.T) {
+	directory, lunStub, domStub, now := directoryFixture(t)
+	ctx := context.Background()
+	if _, err := directory.List(ctx, "Київ"); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(8 * 24 * time.Hour)
+	lunStub.areas = lunStub.areas[:1]
+	domStub.areas = domStub.areas[:1]
+	paths, err := directory.Paths(ctx, "lun", "Київ", []domain.AreaRef{{Key: "осокорки"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(paths, ",") != "/rent/kyiv/flats-osokorky" {
+		t.Fatalf("paths %v", paths)
+	}
+}
+
+func TestDirectoryRetriesIncompleteScanSoon(t *testing.T) {
+	directory, lunStub, _, now := directoryFixture(t)
+	ctx := context.Background()
+	lunStub.areasErr = fmt.Errorf("lun: %w", sources.ErrIncompleteAreas)
+	options, err := directory.List(ctx, "Київ")
+	if err != nil || len(options) != 3 {
+		t.Fatalf("options %+v err %v", options, err)
+	}
+	if _, err := directory.List(ctx, "Київ"); err != nil {
+		t.Fatal(err)
+	}
+	if lunStub.reads != 1 {
+		t.Fatalf("reread at once: %d", lunStub.reads)
+	}
+	*now = now.Add(areaScanRetry + time.Minute)
+	lunStub.areasErr = nil
+	if _, err := directory.List(ctx, "Київ"); err != nil {
+		t.Fatal(err)
+	}
+	if lunStub.reads != 2 {
+		t.Fatalf("not retried: %d", lunStub.reads)
+	}
+}
+
 func TestDirectoryFailsWhenNothingIsKnown(t *testing.T) {
 	directory, lunStub, domStub, _ := directoryFixture(t)
 	lunStub.areasErr, domStub.areasErr = errors.New("down"), errors.New("down")

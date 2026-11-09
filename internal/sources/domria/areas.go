@@ -40,7 +40,7 @@ func parseAreas(base, page string) []domain.Area {
 	byKey := map[string]domain.Area{}
 	for _, match := range areaAnchorPattern.FindAllStringSubmatch(page, -1) {
 		path := match[1]
-		if !strings.HasPrefix(path, prefix) {
+		if !strings.HasPrefix(path, prefix) || !catalogPath.MatchString(path) {
 			continue
 		}
 		name := strings.Join(strings.Fields(html.UnescapeString(tagPattern.ReplaceAllString(match[2], " "))), " ")

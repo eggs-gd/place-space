@@ -3,6 +3,7 @@ package lun
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,8 +71,46 @@ func TestAreasKeepCityPageWhenDistrictPageFails(t *testing.T) {
 		_, _ = w.Write([]byte(cityPage))
 	})
 	areas, err := adapter.Areas(context.Background(), "Київ")
-	if err != nil || len(areas) != 2 {
+	if !errors.Is(err, sources.ErrIncompleteAreas) || len(areas) != 2 {
 		t.Fatalf("areas %+v err %v", areas, err)
+	}
+}
+
+func cardsPage(total int, ids ...int) string {
+	cards := make([]string, 0, len(ids))
+	for _, id := range ids {
+		cards = append(cards, fmt.Sprintf(`{"id":%d,"urlRaw":"https://example.test/%d"}`, id, id))
+	}
+	return fmt.Sprintf(`<script>{"realties":{"totalRealtiesCount":%d,"cards":[%s]}}</script>`, total, strings.Join(cards, ","))
+}
+
+func TestOverlappingAreasStillReadLaterPages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "-b") && page == "2":
+			_, _ = w.Write([]byte(cardsPage(4, 3, 4)))
+		case page == "2":
+			_, _ = w.Write([]byte(cardsPage(2)))
+		default:
+			_, _ = w.Write([]byte(cardsPage(4, 1, 2)))
+		}
+	}))
+	defer server.Close()
+	adapter := New(Options{BaseURL: server.URL, HTTP: server.Client(), DisablePause: true, MaxPages: 2})
+	raws, err := adapter.Fetch(context.Background(), domain.Query{
+		City: "Київ", Areas: []domain.AreaRef{{Key: "a"}, {Key: "b"}},
+		AreaPaths: []string{"/rent/kyiv/flats-a", "/rent/kyiv/flats-b"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(raws))
+	for _, raw := range raws {
+		ids = append(ids, raw.ExternalID)
+	}
+	if got := strings.Join(ids, ","); got != "1,2,3,4" {
+		t.Fatalf("ids %s", got)
 	}
 }
 
@@ -169,6 +208,22 @@ func TestFetchMarksRefusals(t *testing.T) {
 		_, err := adapter.Fetch(context.Background(), domain.Query{City: "Київ"})
 		if !errors.Is(err, sources.ErrBlocked) {
 			t.Fatalf("status %d: %v", status, err)
+		}
+	}
+}
+
+func TestCleanPathAcceptsOnlyCatalogPaths(t *testing.T) {
+	for _, good := range []string{"/rent/kyiv/flats", "/rent/khmelnytskyi/flats-kamianets-podilskyi"} {
+		if _, err := cleanPath(good); err != nil {
+			t.Errorf("%s: %v", good, err)
+		}
+	}
+	for _, bad := range []string{
+		"", "/rent/", "/sale/kyiv/flats", "/rent/../admin", "/rent/kyiv/flats?x=1", "/rent/kyiv/flats#a",
+		"/rent/kyiv/%2e%2e/flats", "/rent/kyiv//flats", "/rent/kyiv/flats@evil.test", `/rent/kyiv\flats`, "//evil.test/rent/a",
+	} {
+		if _, err := cleanPath(bad); err == nil {
+			t.Errorf("%q accepted", bad)
 		}
 	}
 }

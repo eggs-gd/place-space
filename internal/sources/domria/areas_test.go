@@ -77,10 +77,56 @@ func TestFetchTreatsRedirectToWholeCityAsFailure(t *testing.T) {
 	}
 }
 
+func TestOverlappingAreasStillReadLaterPages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		switch {
+		case strings.Contains(r.URL.Path, "rayon-b") && page == "2":
+			_, _ = w.Write([]byte(catalogPage([]string{cardJSON("3", false), cardJSON("4", false)}, 4, false)))
+		case page == "2":
+			_, _ = w.Write([]byte(catalogPage([]string{cardJSON("1", false), cardJSON("2", false)}, 4, false)))
+		default:
+			_, _ = w.Write([]byte(catalogPage([]string{cardJSON("1", false), cardJSON("2", false)}, 4, false)))
+		}
+	}))
+	defer server.Close()
+	adapter := New(Options{BaseURL: server.URL, HTTP: server.Client(), DisablePause: true, MaxPages: 2})
+	raws, err := adapter.Fetch(context.Background(), domain.Query{
+		City: "Київ", Areas: []domain.AreaRef{{Key: "a"}, {Key: "b"}},
+		AreaPaths: []string{"/uk/arenda-kvartir/kiev-rayon-a/", "/uk/arenda-kvartir/kiev-rayon-b/"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(raws))
+	for _, raw := range raws {
+		ids = append(ids, raw.ExternalID)
+	}
+	if got := strings.Join(ids, ","); got != "1,2,3,4" {
+		t.Fatalf("ids %s", got)
+	}
+}
+
 func TestFetchMarksRefusals(t *testing.T) {
 	adapter := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTooManyRequests) })
 	_, err := adapter.Fetch(context.Background(), domain.Query{City: "Київ"})
 	if !errors.Is(err, sources.ErrBlocked) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func TestCleanPathAcceptsOnlyCatalogPaths(t *testing.T) {
+	for _, good := range []string{"/uk/arenda-kvartir/kiev/", "/uk/arenda-kvartir/kiev-rayon-darnytskyi/"} {
+		if _, err := cleanPath(good); err != nil {
+			t.Errorf("%s: %v", good, err)
+		}
+	}
+	for _, bad := range []string{
+		"", "/uk/arenda-kvartir/", "/uk/prodazha/kiev/", "/uk/arenda-kvartir/../admin", "/uk/arenda-kvartir/kiev/?x=1",
+		"/uk/arenda-kvartir/%2e%2e/", "/uk/arenda-kvartir/kiev/extra/", "//evil.test/uk/arenda-kvartir/a/",
+	} {
+		if _, err := cleanPath(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }

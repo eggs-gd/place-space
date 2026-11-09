@@ -12,10 +12,14 @@ import (
 // ErrBlocked marks a response that says the site refuses or limits this client.
 var ErrBlocked = errors.New("source refused the request")
 
+// ErrIncompleteAreas accompanies a usable but partial list of areas.
+var ErrIncompleteAreas = errors.New("some area pages could not be read")
+
 // AreaReader is implemented by adapters that can list a city's areas.
 //
-// It fails only when the city page itself cannot be read. A source without
-// areas for the city returns an empty list.
+// A source without areas for the city returns an empty list. When only part
+// of the areas could be read, the list comes with ErrIncompleteAreas; any other
+// error means there is no list.
 type AreaReader interface {
 	Areas(ctx context.Context, city string) ([]domain.Area, error)
 }

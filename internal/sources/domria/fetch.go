@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,10 @@ import (
 )
 
 const maxBody = 8 << 20
+
+// catalogPath is the only shape of path requested from DOM.RIA. City and area
+// paths can come from a person or from a scraped page.
+var catalogPath = regexp.MustCompile(`^/uk/arenda-kvartir/[a-z0-9-]+/?$`)
 
 // Fetch loads every requested property path, following ?page= until a short
 // page, a repeated page, or maxPages. An empty catalog is a successful fetch:
@@ -123,11 +128,8 @@ func (a *Adapter) cityPath(city string) (string, error) {
 }
 
 func cleanPath(path string) (string, error) {
-	if strings.Contains(path, "..") || strings.Contains(path, "://") || strings.Contains(path, "?") {
-		return "", fmt.Errorf("domria: invalid search path %q", path)
-	}
-	if !strings.HasPrefix(path, "/uk/arenda-kvartir/") {
-		return "", fmt.Errorf("domria: search path %q must start with /uk/arenda-kvartir/", path)
+	if !catalogPath.MatchString(path) {
+		return "", fmt.Errorf("domria: invalid search path %q; it must look like /uk/arenda-kvartir/kiev/", path)
 	}
 	return path, nil
 }
@@ -151,6 +153,9 @@ func (a *Adapter) fetchPath(ctx context.Context, path target, seen map[string]st
 		out      []sources.RawListing
 		pageSize int
 		errs     []error
+		// catalog tracks this catalog alone. seen spans every catalog of the
+		// poll, so overlapping areas must not read as a repeated page.
+		catalog = map[string]struct{}{}
 	)
 	for page := 1; page <= a.maxPages; page++ {
 		if page > 1 && a.pause > 0 {
@@ -181,14 +186,18 @@ func (a *Adapter) fetchPath(ctx context.Context, path target, seen map[string]st
 				continue
 			}
 			externalID := strconv.FormatInt(card.ID, 10)
+			if _, ok := catalog[externalID]; ok {
+				continue
+			}
+			catalog[externalID] = struct{}{}
+			added++
 			if _, ok := seen[externalID]; ok {
 				continue
 			}
 			seen[externalID] = struct{}{}
 			out = append(out, sources.RawListing{ExternalID: externalID, Payload: raw})
-			added++
 		}
-		if added == 0 || (pageSize > 0 && len(cards) < pageSize) || (total > 0 && len(out) >= total) {
+		if added == 0 || (pageSize > 0 && len(cards) < pageSize) || (total > 0 && len(catalog) >= total) {
 			break
 		}
 	}

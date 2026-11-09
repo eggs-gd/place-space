@@ -44,6 +44,7 @@ func (a *Adapter) Areas(ctx context.Context, city string) ([]domain.Area, error)
 		}
 	}
 	sort.Strings(districts)
+	var incomplete error
 	for _, path := range districts {
 		if a.pause > 0 {
 			select {
@@ -53,10 +54,14 @@ func (a *Adapter) Areas(ctx context.Context, city string) ([]domain.Area, error)
 			}
 		}
 		body, err := a.loadAreaPage(ctx, path)
-		if errors.Is(err, sources.ErrBlocked) || ctx.Err() != nil {
-			break
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		if err != nil {
+			incomplete = fmt.Errorf("lun: %w: %w", sources.ErrIncompleteAreas, err)
+			if errors.Is(err, sources.ErrBlocked) {
+				break
+			}
 			continue
 		}
 		collectAreas(found, base, string(body))
@@ -75,7 +80,7 @@ func (a *Adapter) Areas(ctx context.Context, city string) ([]domain.Area, error)
 		out = append(out, area)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out, nil
+	return out, incomplete
 }
 
 func (a *Adapter) loadAreaPage(ctx context.Context, path string) ([]byte, error) {
@@ -89,7 +94,7 @@ func (a *Adapter) loadAreaPage(ctx context.Context, path string) ([]byte, error)
 func collectAreas(found map[string]domain.Area, base, page string) {
 	prefix := base + "-"
 	add := func(path, name, kind string) {
-		if !strings.HasPrefix(path, prefix) || strings.TrimSpace(name) == "" {
+		if !strings.HasPrefix(path, prefix) || !catalogPath.MatchString(path) || strings.TrimSpace(name) == "" {
 			return
 		}
 		key := domain.AreaKey(name)

@@ -35,20 +35,23 @@ func (s *Store) AreasScannedAt(ctx context.Context, sourceType, cityKey string) 
 	return parsed, true, nil
 }
 
-// ReplaceAreas stores a fresh read of a source's areas. An empty list is
-// recorded too: small cities have no areas and must not be rescanned each time.
-func (s *Store) ReplaceAreas(ctx context.Context, sourceType, cityKey string, areas []domain.Area, scannedAt time.Time) error {
+// MergeAreas adds a read of a source's areas to what is known. Nothing is
+// removed: a scan sees only the links on the pages it read, so an area missing
+// from one scan may still exist and a watch may depend on it. An area that is
+// really gone shows up as a redirect error on its page. The scan time is
+// recorded even for an empty list, so small cities are not rescanned each time.
+func (s *Store) MergeAreas(ctx context.Context, sourceType, cityKey string, areas []domain.Area, scannedAt time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM areas WHERE source_type = ? AND city_key = ?`, sourceType, cityKey); err != nil {
-		return fmt.Errorf("clear areas: %w", err)
-	}
 	for _, area := range areas {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO areas (source_type, city_key, area_key, name, kind, path)
-			VALUES (?, ?, ?, ?, ?, ?)`, sourceType, cityKey, area.Key, area.Name, area.Kind, area.Path); err != nil {
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (source_type, city_key, area_key) DO UPDATE SET
+				name = excluded.name, kind = excluded.kind, path = excluded.path`,
+			sourceType, cityKey, area.Key, area.Name, area.Kind, area.Path); err != nil {
 			return fmt.Errorf("save area %s: %w", area.Key, err)
 		}
 	}

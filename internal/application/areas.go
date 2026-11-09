@@ -17,6 +17,7 @@ import (
 
 const (
 	areaScanMaxAge = 7 * 24 * time.Hour
+	areaScanRetry  = time.Hour
 	// MaxAreas caps a watch's areas: each one is its own set of catalog requests.
 	MaxAreas = 5
 )
@@ -148,11 +149,17 @@ func (d *AreaDirectory) ensure(ctx context.Context, city string) error {
 			continue
 		}
 		areas, err := reader.Areas(ctx, city)
-		if err != nil {
+		scannedAt := now
+		switch {
+		case errors.Is(err, sources.ErrIncompleteAreas):
+			// Keep what was found, but look again soon rather than in a week.
+			scannedAt = now.Add(areaScanRetry - areaScanMaxAge)
+			d.log().Warn("areas incomplete", "source", sourceType, "city", city, "err", err)
+		case err != nil:
 			errs = append(errs, err)
 			continue
 		}
-		if err := d.Store.ReplaceAreas(ctx, sourceType, cityKey, areas, now); err != nil {
+		if err := d.Store.MergeAreas(ctx, sourceType, cityKey, areas, scannedAt); err != nil {
 			errs = append(errs, err)
 			continue
 		}
