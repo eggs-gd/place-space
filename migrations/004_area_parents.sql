@@ -1,0 +1,3 @@
+ALTER TABLE areas ADD COLUMN parent_key TEXT NOT NULL DEFAULT '';
+
+DELETE FROM area_scans;

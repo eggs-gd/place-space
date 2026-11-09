@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { MAX_AREAS, coverageNote, groupAreas } from './areas';
+	import { MAX_AREAS, areaTree, canAdd, coverageNote, isCovered, toggleArea } from './areas';
 	import type { AreaOption } from './types';
 
 	let {
@@ -19,16 +19,27 @@
 	} = $props();
 
 	let search = $state('');
+	let opened = $state<Record<string, boolean>>({});
 
-	const groups = $derived(groupAreas(options, search));
-	const full = $derived(selected.length >= MAX_AREAS);
+	const tree = $derived(areaTree(options, search));
+	const searching = $derived(search.trim() !== '');
+	const empty = $derived(tree.districts.length === 0 && tree.others.length === 0);
 
 	function nameOf(key: string): string {
 		return options.find((item) => item.key === key)?.name ?? names[key] ?? key;
 	}
 
-	function toggle(key: string, on: boolean) {
-		selected = on ? [...selected, key] : selected.filter((item) => item !== key);
+	function isOpen(key: string, children: AreaOption[]): boolean {
+		return searching || (opened[key] ?? children.some((item) => selected.includes(item.key)));
+	}
+
+	function toggle(item: AreaOption, on: boolean) {
+		selected = toggleArea(selected, item, on, options);
+		onedit();
+	}
+
+	function remove(key: string) {
+		selected = selected.filter((item) => item !== key);
 		onedit();
 	}
 
@@ -37,13 +48,32 @@
 	}
 </script>
 
+{#snippet row(item: AreaOption)}
+	{@const covered = isCovered(item, selected)}
+	{@const checked = covered || selected.includes(item.key)}
+	<label class="check">
+		<input
+			type="checkbox"
+			{checked}
+			disabled={covered || (!checked && !canAdd(selected, item, options))}
+			onchange={(event) => toggle(item, event.currentTarget.checked)}
+		/>
+		<span>{item.name}</span>
+		{#if covered}
+			<small>входить у район</small>
+		{:else if coverageNote(item)}
+			<small>{coverageNote(item)}</small>
+		{/if}
+	</label>
+{/snippet}
+
 <fieldset class="areas">
 	<legend>Райони</legend>
 	{#if selected.length}
 		<ul class="area-chips">
 			{#each selected as key (key)}
 				<li>
-					<button type="button" aria-label={`Прибрати ${nameOf(key)}`} onclick={() => toggle(key, false)}>
+					<button type="button" aria-label={`Прибрати ${nameOf(key)}`} onclick={() => remove(key)}>
 						{nameOf(key)} <span aria-hidden="true">×</span>
 					</button>
 				</li>
@@ -66,29 +96,45 @@
 			onkeydown={keepForm}
 		/>
 		<div class="area-list">
-			{#each groups as group (group.title)}
-				<p class="area-group">{group.title}</p>
-				{#each group.items as item (item.key)}
-					{@const checked = selected.includes(item.key)}
-					<label class="check">
-						<input
-							type="checkbox"
-							{checked}
-							disabled={full && !checked}
-							onchange={(event) => toggle(item.key, event.currentTarget.checked)}
-						/>
-						<span>{item.name}</span>
-						{#if coverageNote(item)}
-							<small>{coverageNote(item)}</small>
-						{/if}
-					</label>
-				{/each}
-			{:else}
-				<p class="note">Такого району немає.</p>
+			{#each tree.districts as node (node.area.key)}
+				{@const open = isOpen(node.area.key, node.children)}
+				<div class="area-row">
+					{#if node.children.length}
+						<button
+							type="button"
+							class="area-toggle"
+							class:open
+							aria-expanded={open}
+							aria-label={`${open ? 'Згорнути' : 'Розгорнути'} ${node.area.name}`}
+							onclick={() => (opened[node.area.key] = !open)}
+						>
+							<span aria-hidden="true">›</span>
+						</button>
+					{:else}
+						<span class="area-toggle-space"></span>
+					{/if}
+					{@render row(node.area)}
+				</div>
+				{#if open}
+					<div class="area-children">
+						{#each node.children as child (child.key)}
+							{@render row(child)}
+						{/each}
+					</div>
+				{/if}
 			{/each}
+			{#if tree.others.length}
+				<p class="area-group">{tree.districts.length ? 'Район не визначено' : 'Мікрорайони'}</p>
+				{#each tree.others as item (item.key)}
+					{@render row(item)}
+				{/each}
+			{/if}
+			{#if empty}
+				<p class="note">Такого району немає.</p>
+			{/if}
 		</div>
 		<p class="note">
-			{#if full}
+			{#if selected.length >= MAX_AREAS}
 				Можна обрати не більше {MAX_AREAS}.
 			{:else if selected.length === 0}
 				Нічого не обрано: шукатимемо по всьому місту.

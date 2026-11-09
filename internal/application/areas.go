@@ -27,6 +27,7 @@ type AreaOption struct {
 	Key     string   `json:"key"`
 	Name    string   `json:"name"`
 	Kind    string   `json:"kind"`
+	Parent  string   `json:"parent"`
 	Sources []string `json:"sources"`
 }
 
@@ -70,11 +71,18 @@ func (d *AreaDirectory) List(ctx context.Context, city string) ([]AreaOption, er
 		if row.Kind == domain.AreaDistrict {
 			option.Kind = domain.AreaDistrict
 		}
+		// Rows come with LUN first, and its cards name the district directly.
+		if option.Parent == "" {
+			option.Parent = row.Parent
+		}
 		option.Sources = append(option.Sources, row.Source)
 	}
 	out := make([]AreaOption, 0, len(options))
 	for _, option := range options {
 		sort.Strings(option.Sources)
+		if parent, ok := merged[option.Parent]; !ok || parent.Kind != domain.AreaDistrict || option.Kind == domain.AreaDistrict {
+			option.Parent = ""
+		}
 		out = append(out, *option)
 	}
 	return out, nil

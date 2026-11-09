@@ -389,6 +389,60 @@ h1 {
 	font-size: 1rem;
 }
 
+.area-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.area-row .check {
+	flex: 1;
+	min-width: 0;
+}
+
+.editor .area-toggle {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	margin: 0;
+	padding: 0;
+	color: #515154;
+	background: none;
+	border-radius: 8px;
+	font-size: 1.2rem;
+	font-weight: 400;
+	line-height: 1;
+}
+
+.editor .area-toggle:hover {
+	background: #f5f5f7;
+}
+
+.area-toggle span {
+	transition: transform 0.12s ease;
+}
+
+.area-toggle.open span {
+	transform: rotate(90deg);
+}
+
+.area-toggle-space {
+	flex: none;
+	width: 28px;
+}
+
+.area-children {
+	display: grid;
+	gap: 2px;
+	margin-left: 32px;
+}
+
+.editor .area-list .check input:disabled {
+	opacity: 0.45;
+}
+
 .area-list small {
 	margin-left: auto;
 	color: #6e6e73;

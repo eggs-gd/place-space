@@ -55,6 +55,7 @@ export type AreaRef = {
 
 export type AreaOption = AreaRef & {
 	kind: string;
+	parent: string;
 	sources: string[];
 };
 

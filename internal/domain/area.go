@@ -15,6 +15,8 @@ type Area struct {
 	Name string
 	Kind string
 	Path string
+	// Parent is the key of the district containing this area, when known.
+	Parent string
 }
 
 // AreaRef is an area chosen on a watch.
@@ -34,4 +36,30 @@ func AreaKey(name string) string {
 		}
 	}
 	return strings.Join(kept, " ")
+}
+
+// ParentVotes counts how often listings place an area inside a district. A
+// single listing can be mislabelled, and some names span several districts.
+type ParentVotes map[string]map[string]int
+
+// Add records one observation that child lies inside parent.
+func (v ParentVotes) Add(child, parent string) {
+	if child == "" || parent == "" || child == parent {
+		return
+	}
+	if v[child] == nil {
+		v[child] = map[string]int{}
+	}
+	v[child][parent]++
+}
+
+// Best returns the district seen most often for child, or "" when none was.
+func (v ParentVotes) Best(child string) string {
+	best, most := "", 0
+	for parent, count := range v[child] {
+		if count > most || (count == most && parent < best) {
+			best, most = parent, count
+		}
+	}
+	return best
 }

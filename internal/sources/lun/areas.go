@@ -31,11 +31,12 @@ func (a *Adapter) Areas(ctx context.Context, city string) ([]domain.Area, error)
 		return nil, err
 	}
 	found := map[string]domain.Area{}
+	votes := domain.ParentVotes{}
 	body, err := a.loadAreaPage(ctx, base)
 	if err != nil {
 		return nil, err
 	}
-	collectAreas(found, base, string(body))
+	collectAreas(found, votes, base, string(body))
 
 	districts := make([]string, 0, len(found))
 	for _, area := range found {
@@ -64,7 +65,7 @@ func (a *Adapter) Areas(ctx context.Context, city string) ([]domain.Area, error)
 			}
 			continue
 		}
-		collectAreas(found, base, string(body))
+		collectAreas(found, votes, base, string(body))
 	}
 
 	byKey := map[string]domain.Area{}
@@ -77,6 +78,9 @@ func (a *Adapter) Areas(ctx context.Context, city string) ([]domain.Area, error)
 	}
 	out := make([]domain.Area, 0, len(byKey))
 	for _, area := range byKey {
+		if area.Kind == domain.AreaMicrodistrict {
+			area.Parent = votes.Best(area.Key)
+		}
 		out = append(out, area)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
@@ -91,7 +95,7 @@ func (a *Adapter) loadAreaPage(ctx context.Context, path string) ([]byte, error)
 	return a.load(ctx, endpoint, false)
 }
 
-func collectAreas(found map[string]domain.Area, base, page string) {
+func collectAreas(found map[string]domain.Area, votes domain.ParentVotes, base, page string) {
 	prefix := base + "-"
 	add := func(path, name, kind string) {
 		if !strings.HasPrefix(path, prefix) || !catalogPath.MatchString(path) || strings.TrimSpace(name) == "" {
@@ -125,6 +129,19 @@ func collectAreas(found map[string]domain.Area, base, page string) {
 		card, err := decodeCard(raw)
 		if err != nil {
 			continue
+		}
+		var district string
+		var inside []string
+		for _, entity := range card.GeoEntities {
+			switch entity.Type {
+			case domain.AreaDistrict:
+				district = domain.AreaKey(entity.Name)
+			case domain.AreaMicrodistrict:
+				inside = append(inside, domain.AreaKey(entity.Name))
+			}
+		}
+		for _, child := range inside {
+			votes.Add(child, district)
 		}
 		for _, entity := range card.GeoEntities {
 			if entity.URL == nil || (entity.Type != domain.AreaDistrict && entity.Type != domain.AreaMicrodistrict) {

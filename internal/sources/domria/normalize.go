@@ -22,6 +22,7 @@ type card struct {
 	PriceTotal   *float64 `json:"price_total"`
 	Price        *float64 `json:"price"`
 	Currency     string   `json:"currency_type"`
+	District     string   `json:"district_name_uk"`
 	Rooms        *float64 `json:"rooms_count"`
 	Area         *float64 `json:"total_square_meters"`
 	Floor        *float64 `json:"floor"`

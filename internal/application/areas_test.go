@@ -85,6 +85,49 @@ func TestDirectoryMergesSourcesByName(t *testing.T) {
 	}
 }
 
+func TestDirectoryNestsOnlyUnderRealDistricts(t *testing.T) {
+	directory, lunStub, domStub, _ := directoryFixture(t)
+	nested := area("Осокорки", domain.AreaMicrodistrict, "/rent/kyiv/flats-osokorky")
+	nested.Parent = "дарницький"
+	lunStub.areas[1] = nested
+	stray := area("Троєщина", domain.AreaMicrodistrict, "/uk/arenda-kvartir/kiev-rayon-troeshchyna/")
+	stray.Parent = "десь"
+	domStub.areas[1] = stray
+	options, err := directory.List(context.Background(), "Київ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, option := range options {
+		got[option.Key] = option.Parent
+	}
+	if got["осокорки"] != "дарницький" || got["троєщина"] != "" || got["дарницький"] != "" {
+		t.Fatalf("parents %v", got)
+	}
+}
+
+func TestDirectoryKeepsParentWhenLaterScanHasNone(t *testing.T) {
+	directory, lunStub, _, now := directoryFixture(t)
+	ctx := context.Background()
+	nested := area("Осокорки", domain.AreaMicrodistrict, "/rent/kyiv/flats-osokorky")
+	nested.Parent = "дарницький"
+	lunStub.areas[1] = nested
+	if _, err := directory.List(ctx, "Київ"); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(8 * 24 * time.Hour)
+	lunStub.areas[1].Parent = ""
+	options, err := directory.List(ctx, "Київ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, option := range options {
+		if option.Key == "осокорки" && option.Parent != "дарницький" {
+			t.Fatalf("parent lost: %+v", option)
+		}
+	}
+}
+
 func TestDirectoryRereadsOnlyWhenOld(t *testing.T) {
 	directory, lunStub, _, now := directoryFixture(t)
 	ctx := context.Background()

@@ -227,3 +227,19 @@ func TestCleanPathAcceptsOnlyCatalogPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestAreasPlaceMicrodistrictsInsideDistricts(t *testing.T) {
+	page := `<script>{"realties":{"totalRealtiesCount":3,"cards":[
+{"id":1,"geoEntities":[{"type":"district","name":"Дарницький","realtyGeoUrl":{"link":"/rent/kyiv/flats-darnytskyi-district"}},{"type":"microdistrict","name":"Осокорки","realtyGeoUrl":{"link":"/rent/kyiv/flats-osokorky"}}]},
+{"id":2,"geoEntities":[{"type":"district","name":"Дарницький"},{"type":"microdistrict","name":"Осокорки"}]},
+{"id":3,"geoEntities":[{"type":"district","name":"Подільський"},{"type":"microdistrict","name":"Осокорки"}]}
+]}}</script>`
+	adapter := serve(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(page)) })
+	areas, err := adapter.Areas(context.Background(), "Київ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(areas) != 2 || areas[0].Parent != "" || areas[1].Key != "осокорки" || areas[1].Parent != "дарницький" {
+		t.Fatalf("areas %+v", areas)
+	}
+}
