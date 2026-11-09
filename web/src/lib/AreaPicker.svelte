@@ -81,7 +81,7 @@
 		</ul>
 	{/if}
 	{#if loading}
-		<p class="note" role="status">Завантажую райони міста. Вперше це може тривати до хвилини.</p>
+		<p class="note" role="status">Завантажую райони міста. Вперше це може тривати кілька хвилин.</p>
 	{:else if error}
 		<p class="note" role="alert">{error}</p>
 	{:else if options.length === 0}

@@ -161,9 +161,6 @@ func TestAreasReadWhatLiesInsideDistricts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(opened) != 2 {
-		t.Fatalf("opened %v", opened)
-	}
 	if areas[0].Parent != "" || areas[1].Key != "осокорки" || areas[1].Parent != "дарницький" {
 		t.Fatalf("areas %+v", areas)
 	}
@@ -179,6 +176,54 @@ func TestAreasAreIncompleteWhenDistrictPageFails(t *testing.T) {
 	})
 	areas, err := adapter.Areas(context.Background(), "Київ")
 	if !errors.Is(err, sources.ErrIncompleteAreas) || len(areas) != 2 {
+		t.Fatalf("areas %+v err %v", areas, err)
+	}
+}
+
+func TestAreasFindChildrenOnLaterDistrictPages(t *testing.T) {
+	var pages []string
+	adapter := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "-darnytskyi/") {
+			_, _ = w.Write([]byte(areaLinks))
+			return
+		}
+		pages = append(pages, r.URL.Query().Get("page"))
+		if r.URL.Query().Get("page") == "3" {
+			_, _ = w.Write([]byte(`window.__INITIAL_STATE__={"catalog":{"realtyForCatalog":[{"realty_id":3,"district_name_uk":"Осокорки"}],"realtyCountCatalog":3}};`))
+			return
+		}
+		page := r.URL.Query().Get("page")
+		id := 1
+		if page == "2" {
+			id = 2
+		}
+		_, _ = fmt.Fprintf(w, `window.__INITIAL_STATE__={"catalog":{"realtyForCatalog":[{"realty_id":%d,"district_name_uk":"Дарницький"}],"realtyCountCatalog":3}};`, id)
+	})
+	areas, err := adapter.Areas(context.Background(), "Київ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if areas[1].Parent != "дарницький" {
+		t.Fatalf("areas %+v", areas)
+	}
+	if strings.Join(pages, ",") != ",2,3" {
+		t.Fatalf("pages %q", pages)
+	}
+}
+
+func TestAreasKeepEarlierPagesWhenALaterOneFails(t *testing.T) {
+	adapter := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case !strings.HasSuffix(r.URL.Path, "-darnytskyi/"):
+			_, _ = w.Write([]byte(areaLinks))
+		case r.URL.Query().Get("page") == "2":
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			_, _ = w.Write([]byte(catalogWithDistricts("Осокорки")))
+		}
+	})
+	areas, err := adapter.Areas(context.Background(), "Київ")
+	if !errors.Is(err, sources.ErrIncompleteAreas) || areas[1].Parent != "дарницький" {
 		t.Fatalf("areas %+v err %v", areas, err)
 	}
 }

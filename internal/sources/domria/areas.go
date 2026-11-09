@@ -15,6 +15,10 @@ import (
 	"github.com/eggs-gd/place-space/internal/sources"
 )
 
+// districtPages is how many pages of a district are read to find what lies
+// inside it, once a week per city.
+const districtPages = 5
+
 var (
 	areaAnchorPattern = regexp.MustCompile(`(?s)<a\b[^>]*href="([^"]+-rayon-[^"]+)"[^>]*>(.*?)</a>`)
 	tagPattern        = regexp.MustCompile(`<[^>]+>`)
@@ -72,22 +76,37 @@ func (a *Adapter) Areas(ctx context.Context, city string) ([]domain.Area, error)
 	return areas, incomplete
 }
 
+// collectChildren reads several pages of a district: small microdistricts
+// rarely appear among the first twenty listings of a large one.
 func (a *Adapter) collectChildren(ctx context.Context, area domain.Area, votes domain.ParentVotes) error {
-	endpoint, err := url.Parse(a.baseURL + area.Path)
-	if err != nil {
-		return fmt.Errorf("domria: build url: %w", err)
-	}
-	body, err := a.load(ctx, endpoint, true)
-	if err != nil {
-		return err
-	}
-	cards, _, err := extractCatalog(body)
-	if err != nil {
-		return err
-	}
-	for _, raw := range cards {
-		if card, err := decodeCard(raw); err == nil {
+	seen := map[int64]struct{}{}
+	for page := 1; page <= districtPages; page++ {
+		if page > 1 && a.pause > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(a.pause):
+			}
+		}
+		cards, total, err := a.fetchPage(ctx, target{path: area.Path, strict: true}, page)
+		if err != nil {
+			return err
+		}
+		added := 0
+		for _, raw := range cards {
+			card, err := decodeCard(raw)
+			if err != nil {
+				continue
+			}
+			if _, ok := seen[card.ID]; ok {
+				continue
+			}
+			seen[card.ID] = struct{}{}
+			added++
 			votes.Add(domain.AreaKey(card.District), area.Key)
+		}
+		if added == 0 || (total > 0 && len(seen) >= total) {
+			return nil
 		}
 	}
 	return nil
