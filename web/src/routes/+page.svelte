@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ListingCard from '$lib/ListingCard.svelte';
-	import { ago, freshLabel, placesLabel, sourceStatus } from '$lib/format';
+	import { ago, areaNames, freshLabel, placesLabel, sourceName, sourceStatus } from '$lib/format';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -9,6 +9,7 @@
 	const summary = $derived(data.overview.summary);
 	const source = $derived(data.overview.source);
 	const title = $derived(watch?.city || watch?.name || 'Place Space');
+	const failing = $derived((data.overview.sources ?? []).filter((item) => item.lastError));
 </script>
 
 <svelte:head>
@@ -28,16 +29,25 @@
 			<span class="dot" class:live={source?.status === 'healthy'} class:bad={source?.status === 'error'}></span>
 			{watch.enabled ? 'Стежить' : 'Зупинено'}
 			{#if source}
-				· {sourceStatus(source.status)}
+				· {sourceStatus(source.status, failing.length ? failing[0].lastError : '')}
 			{/if}
 		</p>
 	</div>
 	<p class="summary">
+		{#if watch.areas.length}
+			{areaNames(watch.areas)} ·
+		{/if}
 		{placesLabel(summary.places)} · {freshLabel(summary.new)}
 		{#if data.overview.run}
 			· перевірено {ago(data.overview.run.finishedAt)}
 		{/if}
 	</p>
+	{#if failing.length}
+		<p class="note" role="status">
+			{failing.map((item) => sourceName(item.type)).join(', ')}: частину сторінок не вдалося прочитати.
+			<a href="/watch">Подробиці</a>
+		</p>
+	{/if}
 	<nav class="switch" aria-label="Що показувати">
 		<a href="/" aria-current={data.status === 'matched' ? 'page' : undefined}>Підійшли</a>
 		<a href="/?status=rejected" aria-current={data.status === 'rejected' ? 'page' : undefined}>

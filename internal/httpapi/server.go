@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/eggs-gd/place-space/internal/application"
 	"github.com/eggs-gd/place-space/internal/domain"
 	"github.com/eggs-gd/place-space/internal/storage/sqlite"
 )
@@ -22,6 +23,14 @@ type Server struct {
 	Now   func() time.Time
 	// Refresh starts a source check after criteria change. It may be nil.
 	Refresh func(watchID string)
+	// Areas lists and validates city areas. Without it, areas cannot be chosen.
+	Areas AreaDirectory
+}
+
+// AreaDirectory is what the API needs from the area directory.
+type AreaDirectory interface {
+	List(ctx context.Context, city string) ([]application.AreaOption, error)
+	Resolve(ctx context.Context, city string, requested []string) ([]domain.AreaRef, error)
 }
 
 // Handler is the HTTP API.
@@ -30,6 +39,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", s.overview)
 	mux.HandleFunc("GET /api/listings", s.listings)
 	mux.HandleFunc("GET /api/listings/{id}", s.listing)
+	mux.HandleFunc("GET /api/areas", s.areas)
 	mux.HandleFunc("POST /api/watches", s.createWatch)
 	mux.HandleFunc("PATCH /api/watches/{id}", s.updateWatch)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -31,6 +31,7 @@ function watch(overrides: Partial<Watch>): Watch {
 		city: 'Київ',
 		deal: 'rent',
 		properties: ['apartment'],
+		areas: [],
 		priceMin: null,
 		priceMax: null,
 		currency: '',
@@ -109,6 +110,8 @@ describe('source labels', () => {
 		expect(sourceStatus('healthy')).toBe('Працює');
 		expect(sourceStatus('error')).toBe('Помилка');
 		expect(sourceStatus('unknown')).toBe('Ще немає перевірки');
+		expect(sourceStatus('healthy', 'lun: status 500')).toBe('Працює частково');
+		expect(sourceStatus('error', 'lun: status 500')).toBe('Помилка');
 	});
 });
 
@@ -136,6 +139,13 @@ describe('criteria', () => {
 			'2+ кімнати',
 			`від ${plain(area(40))}`
 		]);
+	});
+	it('names chosen areas', () => {
+		const areas = [
+			{ key: 'а', name: 'Дарницький' },
+			{ key: 'б', name: 'Осокорки' }
+		];
+		expect(criteria(watch({ areas }))).toContain('Дарницький, Осокорки');
 	});
 	it('names both property types', () => {
 		expect(criteria(watch({ properties: ['apartment', 'house'] }))).toContain(

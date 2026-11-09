@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,16 @@ import (
 	"github.com/eggs-gd/place-space/internal/sources"
 )
 
-const maxBody = 8 << 20
+// catalogPath is the only shape of path requested from LUN. City and area
+// paths can come from a person or from a scraped page.
+var catalogPath = regexp.MustCompile(`^/rent(/[a-z0-9-]+)+$`)
+
+const (
+	maxBody = 8 << 20
+	// newestFirst is LUN's sort by publication time. The default order is by
+	// relevance, which keeps new listings out of the pages read here.
+	newestFirst = "insert_time"
+)
 
 // Fetch loads every requested property path, following ?page= until the last
 // short page, a repeated page, or maxPages.
@@ -30,8 +40,8 @@ func (a *Adapter) Fetch(ctx context.Context, query domain.Query) ([]sources.RawL
 		errs []error
 		seen = map[string]struct{}{}
 	)
-	for _, path := range paths {
-		listings, fetchErr := a.fetchPath(ctx, path, seen)
+	for _, target := range paths {
+		listings, fetchErr := a.fetchPath(ctx, target, seen)
 		out = append(out, listings...)
 		if fetchErr != nil {
 			errs = append(errs, fetchErr)
@@ -40,7 +50,36 @@ func (a *Adapter) Fetch(ctx context.Context, query domain.Query) ([]sources.RawL
 	return out, errors.Join(errs...)
 }
 
-func (a *Adapter) searchPaths(query domain.Query) ([]string, error) {
+// target is one catalog to read. A strict target must be served at its own
+// address: a redirect means the requested area no longer exists there.
+type target struct {
+	path   string
+	strict bool
+}
+
+func (a *Adapter) basePaths(query domain.Query) ([]string, bool, error) {
+	if len(query.AreaPaths) > 0 {
+		paths := make([]string, 0, len(query.AreaPaths))
+		for _, path := range query.AreaPaths {
+			clean, err := cleanPath(path)
+			if err != nil {
+				return nil, false, err
+			}
+			paths = append(paths, clean)
+		}
+		return paths, true, nil
+	}
+	if len(query.Areas) > 0 {
+		return nil, false, fmt.Errorf("lun: no catalog pages for the chosen areas")
+	}
+	base, err := a.cityPath(query.City)
+	if err != nil {
+		return nil, false, err
+	}
+	return []string{base}, false, nil
+}
+
+func (a *Adapter) searchPaths(query domain.Query) ([]target, error) {
 	deal := query.Deal
 	if deal == "" {
 		deal = domain.DealRent
@@ -48,7 +87,7 @@ func (a *Adapter) searchPaths(query domain.Query) ([]string, error) {
 	if deal != domain.DealRent {
 		return nil, fmt.Errorf("lun: unsupported deal %q", query.Deal)
 	}
-	base, err := a.cityPath(query.City)
+	bases, strict, err := a.basePaths(query)
 	if err != nil {
 		return nil, err
 	}
@@ -56,18 +95,20 @@ func (a *Adapter) searchPaths(query domain.Query) ([]string, error) {
 	if len(properties) == 0 {
 		properties = []string{domain.PropertyApartment}
 	}
-	var paths []string
+	var paths []target
 	seen := map[string]struct{}{}
-	for _, property := range properties {
-		path, err := propertyPath(base, property)
-		if err != nil {
-			return nil, err
+	for _, base := range bases {
+		for _, property := range properties {
+			path, err := propertyPath(base, property)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			paths = append(paths, target{path: path, strict: strict})
 		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		paths = append(paths, path)
 	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("lun: no search paths for %q", query.City)
@@ -91,11 +132,8 @@ func (a *Adapter) cityPath(city string) (string, error) {
 }
 
 func cleanPath(path string) (string, error) {
-	if strings.Contains(path, "..") || strings.Contains(path, "://") || strings.Contains(path, "?") {
-		return "", fmt.Errorf("lun: invalid search path %q", path)
-	}
-	if !strings.HasPrefix(path, "/rent/") {
-		return "", fmt.Errorf("lun: search path %q must start with /rent/", path)
+	if !catalogPath.MatchString(path) {
+		return "", fmt.Errorf("lun: invalid search path %q; it must look like /rent/kyiv/flats", path)
 	}
 	return path, nil
 }
@@ -114,11 +152,15 @@ func propertyPath(base, property string) (string, error) {
 	}
 }
 
-func (a *Adapter) fetchPath(ctx context.Context, path string, seen map[string]struct{}) ([]sources.RawListing, error) {
+func (a *Adapter) fetchPath(ctx context.Context, path target, seen map[string]struct{}) ([]sources.RawListing, error) {
 	var (
 		out      []sources.RawListing
 		pageSize int
 		errs     []error
+		sorted   = true
+		// catalog tracks this catalog alone. seen spans every catalog of the
+		// poll, so overlapping areas must not read as a repeated page.
+		catalog = map[string]struct{}{}
 	)
 	for page := 1; page <= a.maxPages; page++ {
 		if page > 1 && a.pause > 0 {
@@ -130,7 +172,13 @@ func (a *Adapter) fetchPath(ctx context.Context, path string, seen map[string]st
 			case <-timer.C:
 			}
 		}
-		cards, total, err := a.fetchPage(ctx, path, page)
+		cards, total, err := a.fetchPage(ctx, path, page, sorted)
+		if err == nil && page == 1 && len(cards) == 0 {
+			// LUN answers a sort it does not know with an empty catalog. Without
+			// this, a renamed value would look like a city with no listings.
+			sorted = false
+			cards, total, err = a.fetchPage(ctx, path, page, sorted)
+		}
 		if err != nil {
 			errs = append(errs, err)
 			break
@@ -149,33 +197,52 @@ func (a *Adapter) fetchPath(ctx context.Context, path string, seen map[string]st
 				continue
 			}
 			externalID := strconv.FormatInt(card.ID, 10)
+			if _, ok := catalog[externalID]; ok {
+				continue
+			}
+			catalog[externalID] = struct{}{}
+			added++
 			if _, ok := seen[externalID]; ok {
 				continue
 			}
 			seen[externalID] = struct{}{}
 			out = append(out, sources.RawListing{ExternalID: externalID, Payload: raw})
-			added++
 		}
-		if added == 0 || (pageSize > 0 && len(cards) < pageSize) || (total > 0 && len(out) >= total) {
+		if added == 0 || (pageSize > 0 && len(cards) < pageSize) || (total > 0 && len(catalog) >= total) {
 			break
 		}
 	}
 	return out, errors.Join(errs...)
 }
 
-func (a *Adapter) fetchPage(ctx context.Context, path string, page int) ([]json.RawMessage, int, error) {
-	endpoint, err := url.Parse(a.baseURL + path)
+func (a *Adapter) fetchPage(ctx context.Context, path target, page int, sorted bool) ([]json.RawMessage, int, error) {
+	endpoint, err := url.Parse(a.baseURL + path.path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("lun: build url: %w", err)
 	}
-	if page > 1 {
-		query := endpoint.Query()
-		query.Set("page", strconv.Itoa(page))
-		endpoint.RawQuery = query.Encode()
+	query := endpoint.Query()
+	if sorted {
+		query.Set("sort", newestFirst)
 	}
+	if page > 1 {
+		query.Set("page", strconv.Itoa(page))
+	}
+	endpoint.RawQuery = query.Encode()
+	body, err := a.load(ctx, endpoint, path.strict)
+	if err != nil {
+		return nil, 0, err
+	}
+	payload, err := extractRealties(string(body))
+	if err != nil {
+		return nil, 0, fmt.Errorf("lun: %s: %w", endpoint.Path, err)
+	}
+	return payload.Cards, payload.Total, nil
+}
+
+func (a *Adapter) load(ctx context.Context, endpoint *url.URL, strict bool) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("lun: request: %w", err)
+		return nil, fmt.Errorf("lun: request: %w", err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
@@ -183,21 +250,23 @@ func (a *Adapter) fetchPage(ctx context.Context, path string, page int) ([]json.
 
 	resp, err := a.http.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("lun: get %s: %w", endpoint.Path, err)
+		return nil, fmt.Errorf("lun: get %s: %w", endpoint.Path, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return nil, 0, fmt.Errorf("lun: read %s: %w", endpoint.Path, err)
+		return nil, fmt.Errorf("lun: read %s: %w", endpoint.Path, err)
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("lun: %s: status %d: %w", endpoint.Path, resp.StatusCode, sources.ErrBlocked)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("lun: %s: status %d", endpoint.Path, resp.StatusCode)
+		return nil, fmt.Errorf("lun: %s: status %d", endpoint.Path, resp.StatusCode)
 	}
-	payload, err := extractRealties(string(body))
-	if err != nil {
-		return nil, 0, fmt.Errorf("lun: %s: %w", endpoint.Path, err)
+	if strict && resp.Request != nil && strings.TrimRight(resp.Request.URL.Path, "/") != strings.TrimRight(endpoint.Path, "/") {
+		return nil, fmt.Errorf("lun: %s redirected to %s", endpoint.Path, resp.Request.URL.Path)
 	}
-	return payload.Cards, payload.Total, nil
+	return body, nil
 }
 
 type realtyEnvelope struct {

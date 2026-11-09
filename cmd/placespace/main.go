@@ -91,6 +91,7 @@ func cmdPoll(args []string) error {
 	fs.Var(&roomsMin, "rooms-min", "мінімум кімнат")
 	fs.Var(&areaMin, "area-min", "мінімальна площа, м²")
 	currency := fs.String("currency", "", "валюта фільтра ціни; з межею ціни типово UAH")
+	areas := fs.String("areas", "", "райони міста через кому, наприклад Дарницький,Осокорки")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -117,11 +118,16 @@ func cmdPoll(args []string) error {
 	if err != nil {
 		return err
 	}
+	pipeline := newPipeline(store, *pages)
+	areaRefs, err := pipeline.Areas.Resolve(ctx, *city, splitList(*areas))
+	if err != nil {
+		return err
+	}
 	watch := domain.Watch{
 		Name:         *name,
 		Enabled:      true,
 		SourceIDs:    sourceIDs,
-		Query:        domain.Query{City: *city, Deal: *deal, Properties: properties},
+		Query:        domain.Query{City: *city, Deal: *deal, Properties: properties, Areas: areaRefs},
 		Filters:      domain.Filters{PriceMin: priceMin.value, PriceMax: priceMax.value, Currency: *currency, RoomsMin: roomsMin.value, AreaMin: areaMin.value},
 		PollInterval: *interval,
 	}
@@ -145,7 +151,7 @@ func cmdPoll(args []string) error {
 		}
 	}
 
-	report, err := newPipeline(store, *pages).PollWatch(ctx, watch)
+	report, err := pipeline.PollWatch(ctx, watch)
 	if err != nil {
 		return err
 	}
@@ -173,23 +179,24 @@ func cmdRun(args []string) error {
 		return err
 	}
 	defer store.Close()
-	return pollLoop(ctx, store, newScheduler(store, *pages))
+	return pollLoop(ctx, store, newScheduler(store, newPipeline(store, *pages)))
 }
 
 func newPipeline(store *sqlite.Store, pages int) *application.Pipeline {
+	adapters := map[string]sources.Adapter{
+		"lun":    lun.New(lun.Options{MaxPages: pages}),
+		"domria": domria.New(domria.Options{MaxPages: pages}),
+	}
 	return &application.Pipeline{
-		Store: store,
-		Adapters: map[string]sources.Adapter{
-			"lun":    lun.New(lun.Options{MaxPages: pages}),
-			"domria": domria.New(domria.Options{MaxPages: pages}),
-		},
-		Rates: &rates.Cache{Store: store, Fetcher: &rates.NBU{}, Log: slog.Default()},
-		Log:   slog.Default(),
+		Store:    store,
+		Adapters: adapters,
+		Rates:    &rates.Cache{Store: store, Fetcher: &rates.NBU{}, Log: slog.Default()},
+		Areas:    &application.AreaDirectory{Store: store, Adapters: adapters, Log: slog.Default()},
+		Log:      slog.Default(),
 	}
 }
 
-func newScheduler(store *sqlite.Store, pages int) *scheduler.Scheduler {
-	pipeline := newPipeline(store, pages)
+func newScheduler(store *sqlite.Store, pipeline *application.Pipeline) *scheduler.Scheduler {
 	return scheduler.New(store.ListWatches, func(ctx context.Context, watch domain.Watch) error {
 		fresh, err := store.GetWatch(ctx, watch.ID)
 		if err != nil {
@@ -270,6 +277,16 @@ func writeJSON(w io.Writer, value any) error {
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	return enc.Encode(value)
+}
+
+func splitList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func parseProperties(raw string) ([]string, error) {

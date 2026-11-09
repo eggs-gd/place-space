@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eggs-gd/place-space/internal/application"
 	"github.com/eggs-gd/place-space/internal/domain"
 	"github.com/eggs-gd/place-space/internal/id"
 	"github.com/eggs-gd/place-space/internal/storage/sqlite"
@@ -343,5 +344,89 @@ func TestOriginPolicy(t *testing.T) {
 	}
 	if len(watches) != 0 {
 		t.Fatalf("foreign write landed: %+v", watches)
+	}
+}
+
+type stubAreas struct{}
+
+func (s *stubAreas) List(context.Context, string) ([]application.AreaOption, error) {
+	return []application.AreaOption{{Key: "дарницький", Name: "Дарницький", Kind: domain.AreaDistrict, Sources: []string{"lun"}}}, nil
+}
+
+func (s *stubAreas) Resolve(_ context.Context, _ string, requested []string) ([]domain.AreaRef, error) {
+	if len(requested) == 1 && requested[0] == "дарницький" {
+		return []domain.AreaRef{{Key: "дарницький", Name: "Дарницький"}}, nil
+	}
+	return nil, &application.AreaError{Message: "район не знайдено"}
+}
+
+func areaServer(t *testing.T) (http.Handler, *sqlite.Store) {
+	t.Helper()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "place.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return (&Server{Store: store, Areas: &stubAreas{}}).Handler(), store
+}
+
+func call(t *testing.T, handler http.Handler, method, target, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(method, target, strings.NewReader(body)))
+	return rec
+}
+
+func TestAreasEndpoint(t *testing.T) {
+	handler, _ := areaServer(t)
+	rec := call(t, handler, http.MethodGet, "/api/areas?city=%D0%9A%D0%B8%D1%97%D0%B2", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"key":"дарницький"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestWatchKeepsChosenAreas(t *testing.T) {
+	handler, store := areaServer(t)
+	rec := call(t, handler, http.MethodPost, "/api/watches", `{"city":"Київ","properties":["apartment"],"areas":["дарницький"]}`)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"areas":[{"key":"дарницький","name":"Дарницький"}]`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	watches, err := store.ListWatches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watches) != 1 || len(watches[0].Query.Areas) != 1 {
+		t.Fatalf("stored %+v", watches)
+	}
+}
+
+func TestWatchRejectsUnknownArea(t *testing.T) {
+	handler, store := areaServer(t)
+	rec := call(t, handler, http.MethodPost, "/api/watches", `{"city":"Київ","properties":["apartment"],"areas":["марс"]}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "не знайдено") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	watches, err := store.ListWatches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watches) != 0 {
+		t.Fatalf("saved %+v", watches)
+	}
+}
+
+func TestChangingAreasChangesTheSearch(t *testing.T) {
+	base := domain.Query{City: "Київ", Deal: domain.DealRent, Areas: []domain.AreaRef{{Key: "а"}, {Key: "б"}}}
+	same := domain.Query{City: "Київ", Deal: domain.DealRent, Areas: []domain.AreaRef{{Key: "б"}, {Key: "а"}}}
+	other := domain.Query{City: "Київ", Deal: domain.DealRent, Areas: []domain.AreaRef{{Key: "а"}, {Key: "в"}}}
+	none := domain.Query{City: "Київ", Deal: domain.DealRent}
+	if queryChanged(base, same) {
+		t.Fatal("reordering counted as a change")
+	}
+	if !queryChanged(base, other) || !queryChanged(base, none) {
+		t.Fatal("different areas not noticed")
 	}
 }

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
-	import { sendJSON } from '$lib/api';
+	import AreaPicker from '$lib/AreaPicker.svelte';
+	import { loadAreas, sendJSON } from '$lib/api';
 	import { ago, sourceName, sourceStatus } from '$lib/format';
-	import type { Watch } from '$lib/types';
+	import type { AreaOption, Watch } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -35,6 +36,44 @@
 	let enabled = $state(true);
 	let saving = $state(false);
 	let notice = $state('');
+	let areas = $state<string[]>([]);
+	let areaOptions = $state<AreaOption[]>([]);
+	let areasLoading = $state(false);
+	let areasError = $state('');
+	let loadedCity = '';
+	let areasRequest = 0;
+
+	const areaNames = $derived(Object.fromEntries((watch?.areas ?? []).map((item) => [item.key, item.name])));
+
+	async function refreshAreas(name: string) {
+		const trimmed = name.trim();
+		if (trimmed === loadedCity) return;
+		loadedCity = trimmed;
+		const request = ++areasRequest;
+		areaOptions = [];
+		areasError = '';
+		if (!trimmed) {
+			areasLoading = false;
+			return;
+		}
+		areasLoading = true;
+		try {
+			const options = await loadAreas(trimmed);
+			if (request === areasRequest) areaOptions = options;
+		} catch (err) {
+			if (request === areasRequest) {
+				areasError = err instanceof Error ? err.message : 'Не вдалося завантажити райони';
+				loadedCity = '';
+			}
+		} finally {
+			if (request === areasRequest) areasLoading = false;
+		}
+	}
+
+	function cityChanged() {
+		if (city.trim() !== loadedCity) areas = [];
+		refreshAreas(city);
+	}
 
 	const nextCheck = $derived.by(() => {
 		if (!watch || !run) return '';
@@ -56,6 +95,7 @@
 					watch.roomsMin,
 					watch.areaMin,
 					watch.properties.join(','),
+					watch.areas.map((item) => item.key).join(','),
 					watch.enabled
 				].join('|')
 			: 'new';
@@ -73,9 +113,12 @@
 			areaMin = '';
 			property = 'apartment';
 			enabled = true;
+			areas = [];
 			return;
 		}
 		city = current.city;
+		areas = current.areas.map((item) => item.key);
+		refreshAreas(current.city);
 		priceMax = current.priceMax == null ? '' : String(current.priceMax);
 		priceMin = current.priceMin == null ? '' : String(current.priceMin);
 		roomsMin = current.roomsMin == null ? '' : String(current.roomsMin);
@@ -111,6 +154,7 @@
 				roomsMin: blankNumber(roomsMin),
 				areaMin: blankNumber(areaMin),
 				properties: property === 'both' ? ['apartment', 'house'] : [property],
+				areas,
 				enabled
 			};
 			if (watch) {
@@ -147,8 +191,18 @@
 <form class="editor" oninput={() => (editing = true)} onsubmit={save}>
 	<label>
 		Місто
-		<input name="city" bind:value={city} required autocomplete="off" />
+		<input name="city" bind:value={city} onchange={cityChanged} required autocomplete="off" />
 	</label>
+	{#if city.trim()}
+		<AreaPicker
+			options={areaOptions}
+			bind:selected={areas}
+			names={areaNames}
+			loading={areasLoading}
+			error={areasError}
+			onedit={() => (editing = true)}
+		/>
+	{/if}
 	<label>
 		Ціна до, ₴
 		<input name="priceMax" type="number" min="0" step="1" bind:value={priceMax} placeholder="без межі" />
@@ -195,7 +249,7 @@
 				<p class="watching">
 					<span class="dot" class:live={source.status === 'healthy'} class:bad={source.status === 'error'}
 					></span>
-					{sourceName(source.type)} · {sourceStatus(source.status)}
+					{sourceName(source.type)} · {sourceStatus(source.status, source.lastError)}
 				</p>
 				{#if source.lastError}
 					<p class="note">{source.lastError}</p>
