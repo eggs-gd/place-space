@@ -129,7 +129,11 @@ export function reasonText(reason: Reason): string {
 		if (reason.field === 'rooms') return 'кількість кімнат невідома';
 		if (reason.field === 'area') return 'площа невідома';
 	}
-	if (reason.message.startsWith('currency:')) return `валюта не ${reason.message.split('!=')[1]?.trim() ?? ''}`.trim();
+	const currency = reason.message.match(/^currency: (\S+) != (\S+)$/);
+	if (currency) {
+		if (currency[1] === 'unknown') return 'валюта невідома';
+		return `немає курсу ${currency[1]} до ${currency[2]}`;
+	}
 	return reason.message;
 }
 

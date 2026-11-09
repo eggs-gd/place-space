@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"time"
 
@@ -32,16 +33,42 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/watches", s.createWatch)
 	mux.HandleFunc("PATCH /api/watches/{id}", s.updateWatch)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Add("Vary", "Origin")
+		if origin := r.Header.Get("Origin"); origin != "" {
+			if !originAllowed(origin, r.Host) {
+				writeJSON(w, http.StatusForbidden, errorBody{Error: "запит з іншого сайту заборонено"})
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// originAllowed accepts the page the API serves and anything on this machine,
+// which covers the SvelteKit dev server on whatever port it picks. Every other
+// site is refused outright: without this, a page open in the browser could
+// post criteria with a simple request that needs no preflight.
+func originAllowed(origin, host string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if parsed.Host == host {
+		return true
+	}
+	switch parsed.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {

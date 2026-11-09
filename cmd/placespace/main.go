@@ -17,6 +17,7 @@ import (
 
 	"github.com/eggs-gd/place-space/internal/application"
 	"github.com/eggs-gd/place-space/internal/domain"
+	"github.com/eggs-gd/place-space/internal/rates"
 	"github.com/eggs-gd/place-space/internal/scheduler"
 	"github.com/eggs-gd/place-space/internal/sources"
 	"github.com/eggs-gd/place-space/internal/sources/domria"
@@ -134,6 +135,9 @@ func cmdPoll(args []string) error {
 		if err := store.UpdateWatch(ctx, watch); err != nil {
 			return err
 		}
+		if watch, err = store.GetWatch(ctx, watch.ID); err != nil {
+			return err
+		}
 	} else {
 		watch, err = store.CreateWatch(ctx, watch)
 		if err != nil {
@@ -169,7 +173,7 @@ func cmdRun(args []string) error {
 		return err
 	}
 	defer store.Close()
-	return pollLoop(ctx, store, *pages)
+	return pollLoop(ctx, store, newScheduler(store, *pages))
 }
 
 func newPipeline(store *sqlite.Store, pages int) *application.Pipeline {
@@ -179,42 +183,14 @@ func newPipeline(store *sqlite.Store, pages int) *application.Pipeline {
 			"lun":    lun.New(lun.Options{MaxPages: pages}),
 			"domria": domria.New(domria.Options{MaxPages: pages}),
 		},
-		Log: slog.Default(),
+		Rates: &rates.Cache{Store: store, Fetcher: &rates.NBU{}, Log: slog.Default()},
+		Log:   slog.Default(),
 	}
 }
 
-func refreshWatch(store *sqlite.Store, pages int, watchID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	watch, err := store.GetWatch(ctx, watchID)
-	if err != nil {
-		slog.Error("refresh watch", "err", err)
-		return
-	}
-	if !watch.Enabled {
-		return
-	}
-	report, err := newPipeline(store, pages).PollWatch(ctx, watch)
-	if err != nil {
-		slog.Error("refresh watch", "watch", watch.Name, "err", err)
-		return
-	}
-	if application.HasErrors(report) {
-		slog.Error("refresh watch", "watch", watch.Name, "err", "перевірка джерела завершилась з помилками")
-	}
-}
-
-func pollLoop(ctx context.Context, store *sqlite.Store, pages int) error {
-	if _, err := application.EnsureDefaultSources(ctx, store); err != nil {
-		return err
-	}
-	watches, err := store.ListWatches(ctx)
-	if err != nil {
-		return err
-	}
+func newScheduler(store *sqlite.Store, pages int) *scheduler.Scheduler {
 	pipeline := newPipeline(store, pages)
-	slog.Info("scheduler started", "watches", len(watches))
-	return scheduler.Run(ctx, watches, func(ctx context.Context, watch domain.Watch) error {
+	return scheduler.New(store.ListWatches, func(ctx context.Context, watch domain.Watch) error {
 		fresh, err := store.GetWatch(ctx, watch.ID)
 		if err != nil {
 			return err
@@ -226,11 +202,22 @@ func pollLoop(ctx context.Context, store *sqlite.Store, pages int) error {
 		if err != nil {
 			return err
 		}
+		if err := store.Prune(ctx); err != nil {
+			slog.Warn("prune", "err", err)
+		}
 		if application.HasErrors(report) {
 			return errors.New("перевірка джерела завершилась з помилками")
 		}
 		return nil
 	}, slog.Default())
+}
+
+func pollLoop(ctx context.Context, store *sqlite.Store, schedule *scheduler.Scheduler) error {
+	if _, err := application.EnsureDefaultSources(ctx, store); err != nil {
+		return err
+	}
+	slog.Info("scheduler started")
+	return schedule.Run(ctx)
 }
 
 func cmdStatus(args []string) error {

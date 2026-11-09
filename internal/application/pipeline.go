@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,8 +18,14 @@ import (
 type Pipeline struct {
 	Store    *sqlite.Store
 	Adapters map[string]sources.Adapter
+	Rates    RateSource
 	Now      func() time.Time
 	Log      *slog.Logger
+}
+
+// RateSource supplies the exchange rates used by price filters.
+type RateSource interface {
+	Current(context.Context) domain.Rates
 }
 
 // Report is the visible result of checking one watch.
@@ -30,10 +37,16 @@ type Report struct {
 
 // PollWatch checks every enabled source on the watch. One source failing does
 // not stop the others. Listings returned before a later page error are kept.
+// A check overtaken by a criteria change is dropped without an error; the
+// change starts its own check.
 func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, error) {
 	report := Report{Watch: watch, Runs: []domain.Run{}, Items: []Item{}}
 	if len(watch.SourceIDs) == 0 {
 		return report, fmt.Errorf("watch %s has no sources", watch.Name)
+	}
+	var rates domain.Rates
+	if p.Rates != nil {
+		rates = p.Rates.Current(ctx)
 	}
 	for _, sourceID := range watch.SourceIDs {
 		if err := ctx.Err(); err != nil {
@@ -51,7 +64,11 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 		if !ok {
 			return report, fmt.Errorf("no adapter for source type %q", source.Type)
 		}
-		runReport, err := p.pollSource(ctx, watch, source, adapter)
+		runReport, err := p.pollSource(ctx, watch, source, adapter, rates)
+		if errors.Is(err, sqlite.ErrWatchChanged) {
+			p.log().Info("drop poll for changed watch", "watch", watch.Name, "source", source.ID)
+			return report, nil
+		}
 		if err != nil {
 			return report, err
 		}
@@ -61,7 +78,7 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 	return report, nil
 }
 
-func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source domain.Source, adapter sources.Adapter) (Classified, error) {
+func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source domain.Source, adapter sources.Adapter, rates domain.Rates) (Classified, error) {
 	started := p.now()
 	raws, fetchErr := adapter.Fetch(ctx, watch.Query)
 	var fetchErrors []string
@@ -102,6 +119,7 @@ func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source do
 		Existing:    existing,
 		Matches:     matches,
 		FetchErrors: fetchErrors,
+		Rates:       rates,
 		Normalize: func(raw sources.RawListing) (domain.Listing, error) {
 			return adapter.Normalize(ctx, raw)
 		},
@@ -134,6 +152,7 @@ func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source do
 		}
 	}
 	classified.Write.Source = source
+	classified.Write.WatchUpdatedAt = watch.UpdatedAt
 	if err := p.Store.SavePoll(ctx, classified.Write); err != nil {
 		return Classified{}, fmt.Errorf("save poll: %w", err)
 	}

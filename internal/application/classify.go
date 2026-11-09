@@ -43,6 +43,7 @@ type ClassifyInput struct {
 	Existing    []domain.Listing
 	Matches     []domain.Match
 	FetchErrors []string
+	Rates       domain.Rates
 	Normalize   func(sources.RawListing) (domain.Listing, error)
 }
 
@@ -145,7 +146,7 @@ func Classify(in ClassifyInput) (Classified, error) {
 			byURL[listing.URL] = listing
 		}
 
-		item.Decision = domain.Apply(in.Watch.Filters, listing)
+		item.Decision = domain.Apply(in.Watch.Filters, listing, in.Rates)
 		if item.Decision.Status == domain.MatchMatched {
 			run.Matched++
 		} else {
