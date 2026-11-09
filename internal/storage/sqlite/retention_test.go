@@ -42,11 +42,54 @@ func newRetentionFixture(t *testing.T) retentionFixture {
 // save records one check at the given time that found one new matched listing.
 func (f retentionFixture) save(t *testing.T, external string, at time.Time) {
 	t.Helper()
+	f.saveFor(t, f.watch, external, at)
+}
+
+// addWatch creates another watch on the same shared source.
+func (f retentionFixture) addWatch(t *testing.T, name string) domain.Watch {
+	t.Helper()
+	watch, err := f.store.CreateWatch(context.Background(), domain.Watch{
+		Name: name, Enabled: true, SourceIDs: []string{f.source.ID},
+		Query:        domain.Query{City: name, Deal: domain.DealRent},
+		PollInterval: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return watch
+}
+
+// check records a check that received listings without finding anything new.
+func (f retentionFixture) check(t *testing.T, watch domain.Watch, at time.Time, failed int, errs ...string) {
+	t.Helper()
+	f.source.UpdatedAt = at
+	if err := f.store.SavePoll(context.Background(), PollWrite{
+		Run: domain.Run{
+			ID: id.New(), WatchID: watch.ID, SourceID: f.source.ID, SourceType: f.source.Type,
+			StartedAt: at, FinishedAt: at, Received: 5, Failed: failed, Errors: errs,
+		},
+		Source: f.source,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f retentionFixture) exists(t *testing.T, external string) bool {
+	t.Helper()
+	found, err := f.store.ListingsByKeys(context.Background(), f.source.ID, []string{external}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(found) == 1
+}
+
+func (f retentionFixture) saveFor(t *testing.T, watch domain.Watch, external string, at time.Time) {
+	t.Helper()
 	listingID, runID := id.New(), id.New()
 	f.source.UpdatedAt = at
 	err := f.store.SavePoll(context.Background(), PollWrite{
 		Run: domain.Run{
-			ID: runID, WatchID: f.watch.ID, SourceID: f.source.ID, SourceType: f.source.Type,
+			ID: runID, WatchID: watch.ID, SourceID: f.source.ID, SourceType: f.source.Type,
 			StartedAt: at, FinishedAt: at, Received: 1, New: 1, Matched: 1,
 		},
 		Source: f.source,
@@ -58,7 +101,7 @@ func (f retentionFixture) save(t *testing.T, external string, at time.Time) {
 			ID: id.New(), ListingID: listingID, RunID: runID, SeenAt: at, Present: true, ContentHash: external,
 		}},
 		Matches: []domain.Match{{
-			WatchID: f.watch.ID, ListingID: listingID, Status: domain.MatchMatched, UpdatedAt: at,
+			WatchID: watch.ID, ListingID: listingID, Status: domain.MatchMatched, UpdatedAt: at,
 		}},
 	})
 	if err != nil {
@@ -167,6 +210,132 @@ func TestPruneIgnoresAppDowntime(t *testing.T) {
 	}
 	if len(kept) != 1 {
 		t.Fatalf("kept %+v", kept)
+	}
+}
+
+func TestPruneIgnoresChecksOfOtherWatches(t *testing.T) {
+	f := newRetentionFixture(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lviv := f.addWatch(t, "Львів")
+	f.save(t, "kyiv", now.Add(-40*24*time.Hour))
+	f.check(t, lviv, now.Add(-35*24*time.Hour), 0)
+	f.check(t, lviv, now, 0)
+
+	if err := f.store.Prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !f.exists(t, "kyiv") {
+		t.Fatal("another watch's checks erased the listing")
+	}
+}
+
+func TestPruneWaitsForEveryWatchHoldingTheListing(t *testing.T) {
+	f := newRetentionFixture(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lviv := f.addWatch(t, "Львів")
+	f.save(t, "shared", now.Add(-40*24*time.Hour))
+	f.check(t, f.watch, now.Add(-35*24*time.Hour), 0)
+	f.check(t, f.watch, now, 0)
+	// The second watch holds the listing too, but has been checked only once since.
+	err := f.store.SavePoll(ctx, PollWrite{
+		Run: domain.Run{
+			ID: id.New(), WatchID: lviv.ID, SourceID: f.source.ID, SourceType: f.source.Type,
+			StartedAt: now, FinishedAt: now, Received: 5,
+		},
+		Source:  f.source,
+		Matches: []domain.Match{{WatchID: lviv.ID, ListingID: f.listingID(t, "shared"), Status: domain.MatchMatched, UpdatedAt: now}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !f.exists(t, "shared") {
+		t.Fatal("listing erased while a watch still holds it")
+	}
+}
+
+func (f retentionFixture) listingID(t *testing.T, external string) string {
+	t.Helper()
+	found, err := f.store.ListingsByKeys(context.Background(), f.source.ID, []string{external}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("listing %s: %+v", external, found)
+	}
+	return found[0].ID
+}
+
+func TestPruneJudgesUnheldListingsBySource(t *testing.T) {
+	f := newRetentionFixture(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lviv := f.addWatch(t, "Львів")
+	f.save(t, "kyiv", now.Add(-40*24*time.Hour))
+	f.check(t, lviv, now.Add(-35*24*time.Hour), 0)
+	f.check(t, lviv, now, 0)
+	// Switching the watch to another city releases what it held.
+	if err := f.store.ClearMatches(ctx, f.watch.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.exists(t, "kyiv") {
+		t.Fatal("listing nobody holds was kept")
+	}
+}
+
+func TestPartialChecksDoNotAdvanceTheClock(t *testing.T) {
+	f := newRetentionFixture(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	f.save(t, "house", now.Add(-40*24*time.Hour))
+	f.check(t, f.watch, now.Add(-35*24*time.Hour), 0, "lun: /rent/house: status 500")
+	f.check(t, f.watch, now, 0, "lun: /rent/house: status 500")
+
+	if got := f.feedIDs(t); len(got) != 1 {
+		t.Fatalf("feed lost a listing to partial checks: %v", got)
+	}
+	if err := f.store.Prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !f.exists(t, "house") {
+		t.Fatal("partial checks erased the listing")
+	}
+}
+
+func TestMalformedCardDoesNotStopTheClock(t *testing.T) {
+	f := newRetentionFixture(t)
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	f.save(t, "gone", now.Add(-4*24*time.Hour))
+	f.check(t, f.watch, now, 1, "normalize 7: bad card")
+
+	if got := f.feedIDs(t); len(got) != 0 {
+		t.Fatalf("feed %v", got)
+	}
+}
+
+func TestPruneKeepsNewestCompleteRunOfEachWatch(t *testing.T) {
+	f := newRetentionFixture(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lviv := f.addWatch(t, "Львів")
+	f.check(t, f.watch, now.Add(-60*24*time.Hour), 0)
+	f.check(t, lviv, now, 0)
+	if err := f.store.Prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := f.store.RecentRuns(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs %d", len(runs))
 	}
 }
 

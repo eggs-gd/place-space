@@ -18,12 +18,18 @@ type FeedRow struct {
 }
 
 // A listing leaves the feed when its source has gone three days without
-// showing it. Age is measured from the source's latest productive check for
+// showing it. Age is measured from the source's latest complete check for
 // the watch, so a closed app or a broken source does not empty the feed.
 const (
+	// completeRunSQL selects checks that can show a listing has gone: something
+	// arrived and every request succeeded. Errors beyond the failed count are
+	// fetch errors. One malformed card only adds a normalize error, so it does
+	// not stop the clock.
+	completeRunSQL = `received > 0 AND json_array_length(errors_json) = failed`
+
 	latestRunsCTE = `WITH latest AS (
 		SELECT source_id, MAX(started_at) AS at FROM poll_runs
-		WHERE watch_id = ? AND received > 0 GROUP BY source_id
+		WHERE watch_id = ? AND ` + completeRunSQL + ` GROUP BY source_id
 	) `
 	notStaleSQL = ` AND (latest.at IS NULL OR julianday(listings.last_seen_at) >= julianday(latest.at) - 3)`
 )
