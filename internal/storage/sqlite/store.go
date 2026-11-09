@@ -21,6 +21,9 @@ import (
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrWatchChanged is returned when a poll finishes after its watch was edited.
+var ErrWatchChanged = errors.New("watch changed during poll")
+
 // Store is the SQLite database.
 //
 // A single connection keeps the CLI and the scheduler from tripping over

@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/eggs-gd/place-space/internal/domain"
 )
@@ -23,15 +25,31 @@ type PollWrite struct {
 	Observations []domain.Observation
 	Matches      []domain.Match
 	Links        []domain.DuplicateLink
+	// WatchUpdatedAt is the version of the watch this poll ran against. When
+	// set, the write is refused if the watch has changed since.
+	WatchUpdatedAt time.Time
 }
 
 // SavePoll writes the run, listing snapshots, matches, and source status together.
+// It returns ErrWatchChanged, writing nothing, when the poll has become outdated.
 func (s *Store) SavePoll(ctx context.Context, write PollWrite) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if !write.WatchUpdatedAt.IsZero() {
+		var current string
+		if err := tx.QueryRowContext(ctx, `SELECT updated_at FROM watches WHERE id = ?`, write.Run.WatchID).Scan(&current); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrWatchChanged
+			}
+			return fmt.Errorf("check watch version: %w", err)
+		}
+		if current != formatTime(write.WatchUpdatedAt) {
+			return ErrWatchChanged
+		}
+	}
 	if err := updateSourceStatus(ctx, tx, write.Source); err != nil {
 		return err
 	}

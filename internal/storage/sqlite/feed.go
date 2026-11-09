@@ -17,12 +17,32 @@ type FeedRow struct {
 	Match   domain.Match
 }
 
-// MatchCounts counts matched and rejected listings for a watch.
+// A listing leaves the feed when its source has gone three days without
+// showing it. Age is measured from the source's latest complete check for
+// the watch, so a closed app or a broken source does not empty the feed.
+const (
+	// completeRunSQL selects checks that can show a listing has gone: something
+	// arrived and every request succeeded. Errors beyond the failed count are
+	// fetch errors. One malformed card only adds a normalize error, so it does
+	// not stop the clock.
+	completeRunSQL = `received > 0 AND json_array_length(errors_json) = failed`
+
+	latestRunsCTE = `WITH latest AS (
+		SELECT source_id, MAX(started_at) AS at FROM poll_runs
+		WHERE watch_id = ? AND ` + completeRunSQL + ` GROUP BY source_id
+	) `
+	notStaleSQL = ` AND (latest.at IS NULL OR julianday(listings.last_seen_at) >= julianday(latest.at) - 3)`
+)
+
+// MatchCounts counts matched and rejected listings still on the watch's feed.
 func (s *Store) MatchCounts(ctx context.Context, watchID string) (matched, rejected int, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT
-		COALESCE(SUM(CASE WHEN status = 'matched' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0)
-		FROM matches WHERE watch_id = ?`, watchID).Scan(&matched, &rejected)
+	err = s.db.QueryRowContext(ctx, latestRunsCTE+`SELECT
+		COALESCE(SUM(CASE WHEN m.status = 'matched' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN m.status = 'rejected' THEN 1 ELSE 0 END), 0)
+		FROM matches m
+		JOIN listings ON listings.id = m.listing_id
+		LEFT JOIN latest ON latest.source_id = listings.source
+		WHERE m.watch_id = ?`+notStaleSQL, watchID, watchID).Scan(&matched, &rejected)
 	if err != nil {
 		return 0, 0, fmt.Errorf("count matches: %w", err)
 	}
@@ -31,12 +51,13 @@ func (s *Store) MatchCounts(ctx context.Context, watchID string) (matched, rejec
 
 // Feed returns listings for a watch. status is matched, rejected, or all.
 func (s *Store) Feed(ctx context.Context, watchID, status string) ([]FeedRow, error) {
-	query := `SELECT ` + prefixedListingColumns("listings") + `,
+	query := latestRunsCTE + `SELECT ` + prefixedListingColumns("listings") + `,
 		m.watch_id, m.listing_id, m.status, m.reasons_json, m.first_matched_at, m.last_matched_at, m.updated_at
 		FROM listings
 		JOIN matches m ON m.listing_id = listings.id
-		WHERE m.watch_id = ?`
-	args := []any{watchID}
+		LEFT JOIN latest ON latest.source_id = listings.source
+		WHERE m.watch_id = ?` + notStaleSQL
+	args := []any{watchID, watchID}
 	switch status {
 	case domain.MatchMatched, domain.MatchRejected:
 		query += ` AND m.status = ?`

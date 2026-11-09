@@ -49,23 +49,19 @@ func cmdServe(args []string) error {
 	}
 	defer store.Close()
 
+	schedule := newScheduler(store, *pages)
 	var polls sync.WaitGroup
 	startPolls := func() {
 		polls.Add(1)
 		go func() {
 			defer polls.Done()
-			if err := pollLoop(ctx, store, *pages); err != nil && ctx.Err() == nil {
+			if err := pollLoop(ctx, store, schedule); err != nil && ctx.Err() == nil {
 				slog.Error("scheduler stopped", "err", err)
 			}
 		}()
 	}
 
-	api := &httpapi.Server{
-		Store: store,
-		Refresh: func(watchID string) {
-			go refreshWatch(store, *pages, watchID)
-		},
-	}
+	api := &httpapi.Server{Store: store, Refresh: schedule.Refresh}
 	handler := ui.Mount(api.Handler(), ui.Assets())
 	if *open {
 		err = openWindow(ctx, handler, func() {

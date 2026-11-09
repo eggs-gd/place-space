@@ -2,16 +2,21 @@ package domain
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
 
+// Rates is the hryvnia value of one unit of each currency, keyed by ISO code.
+type Rates map[string]float64
+
 // Apply evaluates every predicate. A listing is rejected when any predicate
 // fails. Unknown facts fail a predicate that needs them; they are not treated
-// as a match.
-func Apply(filters Filters, listing Listing) Decision {
+// as a match. Prices in another currency are compared through rates; the
+// listing keeps the price as published.
+func Apply(filters Filters, listing Listing, rates Rates) Decision {
 	reasons := make([]Reason, 0, 4)
-	reasons = append(reasons, priceReasons(filters, listing)...)
+	reasons = append(reasons, priceReasons(filters, listing, rates)...)
 	if filters.RoomsMin != nil {
 		reasons = append(reasons, compareInt("rooms", listing.Rooms, *filters.RoomsMin, ">="))
 	}
@@ -34,7 +39,7 @@ type Decision struct {
 	Reasons []Reason
 }
 
-func priceReasons(filters Filters, listing Listing) []Reason {
+func priceReasons(filters Filters, listing Listing, rates Rates) []Reason {
 	bounded := filters.PriceMin != nil || filters.PriceMax != nil
 	if !bounded && filters.Currency == "" {
 		return nil
@@ -50,7 +55,8 @@ func priceReasons(filters Filters, listing Listing) []Reason {
 			Message: "price: unknown",
 		}}
 	}
-	if currency != "" && !strings.EqualFold(listing.Currency, currency) {
+	price, ok := rates.convert(*listing.PriceAmount, listing.Currency, currency)
+	if !ok {
 		got := listing.Currency
 		if got == "" {
 			got = "unknown"
@@ -63,12 +69,41 @@ func priceReasons(filters Filters, listing Listing) []Reason {
 	}
 	var reasons []Reason
 	if filters.PriceMin != nil {
-		reasons = append(reasons, compareInt64("price", listing.PriceAmount, *filters.PriceMin, ">="))
+		reasons = append(reasons, compareInt64("price", &price, *filters.PriceMin, ">="))
 	}
 	if filters.PriceMax != nil {
-		reasons = append(reasons, compareInt64("price", listing.PriceAmount, *filters.PriceMax, "<="))
+		reasons = append(reasons, compareInt64("price", &price, *filters.PriceMax, "<="))
 	}
 	return reasons
+}
+
+// convert expresses amount in another currency. It reports false when the
+// source currency is unknown or a rate is missing.
+func (r Rates) convert(amount int64, from, to string) (int64, bool) {
+	from, to = strings.ToUpper(from), strings.ToUpper(to)
+	if from == "" || to == "" {
+		return 0, false
+	}
+	if from == to {
+		return amount, true
+	}
+	fromRate, ok := r.hryvnias(from)
+	if !ok {
+		return 0, false
+	}
+	toRate, ok := r.hryvnias(to)
+	if !ok {
+		return 0, false
+	}
+	return int64(math.Round(float64(amount) * fromRate / toRate)), true
+}
+
+func (r Rates) hryvnias(currency string) (float64, bool) {
+	if currency == "UAH" {
+		return 1, true
+	}
+	rate, ok := r[currency]
+	return rate, ok && rate > 0
 }
 
 func compareInt64(field string, value *int64, limit int64, op string) Reason {

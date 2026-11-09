@@ -71,8 +71,8 @@ func TestOverviewFeedAndDetail(t *testing.T) {
 	source.Status = domain.SourceHealthy
 	source.UpdatedAt = now
 	source.LastSuccessAt = &now
-	matchedDecision := domain.Apply(watch.Filters, matched)
-	rejectedDecision := domain.Apply(watch.Filters, rejected)
+	matchedDecision := domain.Apply(watch.Filters, matched, nil)
+	rejectedDecision := domain.Apply(watch.Filters, rejected, nil)
 	if err := store.SavePoll(ctx, sqlite.PollWrite{
 		Run: domain.Run{
 			ID: runID, WatchID: watch.ID, SourceID: source.ID, SourceType: source.Type,
@@ -291,5 +291,57 @@ func get(t *testing.T, url string, dest any) {
 	}
 	if err := json.NewDecoder(res.Body).Decode(dest); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOriginPolicy(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "place.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	handler := (&Server{Store: store}).Handler()
+	cases := []struct {
+		name, method, origin string
+		status               int
+		allow                string
+	}{
+		{"no origin", http.MethodGet, "", http.StatusOK, ""},
+		{"same origin", http.MethodGet, "http://example.test:9000", http.StatusOK, "http://example.test:9000"},
+		{"dev server", http.MethodGet, "http://localhost:5173", http.StatusOK, "http://localhost:5173"},
+		{"dev preflight", http.MethodOptions, "http://127.0.0.1:5174", http.StatusNoContent, "http://127.0.0.1:5174"},
+		{"foreign read", http.MethodGet, "https://evil.test", http.StatusForbidden, ""},
+		{"foreign write", http.MethodPost, "https://evil.test", http.StatusForbidden, ""},
+		{"lookalike host", http.MethodPost, "https://localhost.evil.test", http.StatusForbidden, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			target := "http://example.test:9000/api/overview"
+			if tc.method == http.MethodPost {
+				target = "http://example.test:9000/api/watches"
+			}
+			req := httptest.NewRequest(tc.method, target, strings.NewReader(`{"city":"Київ","properties":["apartment"]}`))
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.status {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.allow {
+				t.Fatalf("allow origin %q", got)
+			}
+		})
+	}
+	watches, err := store.ListWatches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watches) != 0 {
+		t.Fatalf("foreign write landed: %+v", watches)
 	}
 }

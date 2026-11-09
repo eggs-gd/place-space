@@ -35,6 +35,10 @@ jobs:
         working-directory: web
         run: npm ci
 
+      - name: Test interface
+        working-directory: web
+        run: npm test
+
       - name: Build interface
         working-directory: web
         run: npm run build

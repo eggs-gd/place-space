@@ -189,3 +189,104 @@ func jsEscape(value string) string {
 	}
 	return b.String()
 }
+
+type fixedRates domain.Rates
+
+func (r fixedRates) Current(context.Context) domain.Rates { return domain.Rates(r) }
+
+func TestPipelineDropsPollOvertakenByCriteriaChange(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(embedRealties(18000)))
+	}))
+	defer server.Close()
+	ctx := context.Background()
+	store := openStore(t)
+	source, err := store.EnsureSource(ctx, domain.Source{
+		ID: "lun", Type: "lun", Enabled: true, Status: domain.SourceUnknown, Configuration: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outdated, err := store.CreateWatch(ctx, domain.Watch{
+		Name: "Київ", Enabled: true, SourceIDs: []string{source.ID},
+		Query:        domain.Query{City: "/rent/kyiv/flats", Deal: domain.DealRent},
+		PollInterval: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.UpdateWatch(ctx, outdated); err != nil {
+		t.Fatal(err)
+	}
+	pipeline := &Pipeline{Store: store, Adapters: map[string]sources.Adapter{
+		"lun": lun.New(lun.Options{BaseURL: server.URL, HTTP: server.Client(), DisablePause: true, MaxPages: 1}),
+	}}
+	report, err := pipeline.PollWatch(ctx, outdated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Runs) != 0 {
+		t.Fatalf("runs %+v", report.Runs)
+	}
+	matches, err := store.MatchesForWatch(ctx, outdated.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches written: %+v", matches)
+	}
+}
+
+func TestPipelineMatchesForeignPricesThroughRates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := json.Marshal(map[string]any{"realties": map[string]any{
+			"totalRealtiesCount": 1,
+			"cards":              []map[string]any{usdCard(1001, 400)},
+		}})
+		_, _ = w.Write([]byte("<html><script>" + jsEscape(string(body)) + "</script></html>"))
+	}))
+	defer server.Close()
+	ctx := context.Background()
+	store := openStore(t)
+	source, err := store.EnsureSource(ctx, domain.Source{
+		ID: "lun", Type: "lun", Enabled: true, Status: domain.SourceUnknown, Configuration: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	max := int64(20000)
+	watch, err := store.CreateWatch(ctx, domain.Watch{
+		Name: "Київ", Enabled: true, SourceIDs: []string{source.ID},
+		Query:        domain.Query{City: "/rent/kyiv/flats", Deal: domain.DealRent},
+		Filters:      domain.Filters{PriceMax: &max},
+		PollInterval: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline := &Pipeline{
+		Store: store,
+		Rates: fixedRates{"USD": 45},
+		Adapters: map[string]sources.Adapter{
+			"lun": lun.New(lun.Options{BaseURL: server.URL, HTTP: server.Client(), DisablePause: true, MaxPages: 1}),
+		},
+	}
+	report, err := pipeline.PollWatch(ctx, watch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Runs[0].Matched != 1 {
+		t.Fatalf("run %+v", report.Runs[0])
+	}
+	stored := report.Items[0].Listing
+	if *stored.PriceAmount != 400 || stored.Currency != "USD" {
+		t.Fatalf("published price changed: %d %s", *stored.PriceAmount, stored.Currency)
+	}
+}
+
+func usdCard(id, price int) map[string]any {
+	out := card(id, price, 2)
+	out["currency"] = "usd"
+	return out
+}
