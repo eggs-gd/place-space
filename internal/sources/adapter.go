@@ -4,9 +4,21 @@ package sources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/eggs-gd/place-space/internal/domain"
 )
+
+// ErrBlocked marks a response that says the site refuses or limits this client.
+var ErrBlocked = errors.New("source refused the request")
+
+// AreaReader is implemented by adapters that can list a city's areas.
+//
+// It fails only when the city page itself cannot be read. A source without
+// areas for the city returns an empty list.
+type AreaReader interface {
+	Areas(ctx context.Context, city string) ([]domain.Area, error)
+}
 
 // RawListing is one provider payload before normalization.
 type RawListing struct {

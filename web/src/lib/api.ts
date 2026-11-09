@@ -1,6 +1,7 @@
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/public';
 import { error } from '@sveltejs/kit';
+import type { AreaOption } from './types';
 
 export function apiOrigin(): string {
 	if (env.PUBLIC_API_ORIGIN) return env.PUBLIC_API_ORIGIN.replace(/\/$/, '');
@@ -22,6 +23,21 @@ export async function getJSON<T>(path: string, fetchFn: typeof fetch): Promise<T
 		error(response.status, 'Не вдалося завантажити дані');
 	}
 	return response.json() as Promise<T>;
+}
+
+export async function loadAreas(city: string): Promise<AreaOption[]> {
+	let response: Response;
+	try {
+		response = await fetch(`${apiOrigin()}/api/areas?city=${encodeURIComponent(city)}`);
+	} catch {
+		throw new Error('Немає зв’язку з сервером.');
+	}
+	const payload = (await response.json().catch(() => null)) as {
+		areas?: AreaOption[];
+		error?: string;
+	} | null;
+	if (!response.ok) throw new Error(payload?.error || 'Не вдалося завантажити райони');
+	return payload?.areas ?? [];
 }
 
 export async function sendJSON<T>(method: string, path: string, body: unknown): Promise<T> {

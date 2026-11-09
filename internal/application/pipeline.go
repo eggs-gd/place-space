@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/eggs-gd/place-space/internal/domain"
@@ -19,9 +20,17 @@ type Pipeline struct {
 	Store    *sqlite.Store
 	Adapters map[string]sources.Adapter
 	Rates    RateSource
+	Areas    *AreaDirectory
 	Now      func() time.Time
 	Log      *slog.Logger
+
+	mu      sync.Mutex
+	blocked map[string]time.Time
 }
+
+// blockCooldown is how long a source rests after refusing a request. Polling
+// on regardless is how a temporary limit becomes a ban.
+const blockCooldown = 30 * time.Minute
 
 // RateSource supplies the exchange rates used by price filters.
 type RateSource interface {
@@ -64,7 +73,15 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 		if !ok {
 			return report, fmt.Errorf("no adapter for source type %q", source.Type)
 		}
-		runReport, err := p.pollSource(ctx, watch, source, adapter, rates)
+		if p.resting(source.ID) {
+			p.log().Info("skip resting source", "source", source.ID)
+			continue
+		}
+		scoped, ok := p.scope(ctx, watch, source)
+		if !ok {
+			continue
+		}
+		runReport, err := p.pollSource(ctx, scoped, source, adapter, rates)
 		if errors.Is(err, sqlite.ErrWatchChanged) {
 			p.log().Info("drop poll for changed watch", "watch", watch.Name, "source", source.ID)
 			return report, nil
@@ -78,6 +95,53 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 	return report, nil
 }
 
+// scope resolves the watch's areas to this source's catalog pages. It reports
+// false when the source has nothing to read: falling back to the whole city
+// would fill the feed with places the person excluded.
+func (p *Pipeline) scope(ctx context.Context, watch domain.Watch, source domain.Source) (domain.Watch, bool) {
+	if len(watch.Query.Areas) == 0 {
+		return watch, true
+	}
+	if p.Areas == nil {
+		p.log().Warn("watch has areas but no directory", "watch", watch.Name)
+		return watch, false
+	}
+	paths, err := p.Areas.Paths(ctx, source.Type, watch.Query.City, watch.Query.Areas)
+	if err != nil {
+		p.log().Warn("load area paths", "source", source.ID, "err", err)
+		return watch, false
+	}
+	if len(paths) == 0 {
+		p.log().Info("source has none of the areas", "source", source.ID, "watch", watch.Name)
+		return watch, false
+	}
+	watch.Query.AreaPaths = paths
+	return watch, true
+}
+
+func (p *Pipeline) resting(sourceID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	until, ok := p.blocked[sourceID]
+	if !ok {
+		return false
+	}
+	if !p.now().Before(until) {
+		delete(p.blocked, sourceID)
+		return false
+	}
+	return true
+}
+
+func (p *Pipeline) rest(sourceID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.blocked == nil {
+		p.blocked = map[string]time.Time{}
+	}
+	p.blocked[sourceID] = p.now().Add(blockCooldown)
+}
+
 func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source domain.Source, adapter sources.Adapter, rates domain.Rates) (Classified, error) {
 	started := p.now()
 	raws, fetchErr := adapter.Fetch(ctx, watch.Query)
@@ -85,6 +149,9 @@ func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source do
 	if fetchErr != nil {
 		fetchErrors = append(fetchErrors, fetchErr.Error())
 		p.log().Warn("source fetch", "source", source.ID, "received", len(raws), "err", fetchErr)
+		if errors.Is(fetchErr, sources.ErrBlocked) {
+			p.rest(source.ID)
+		}
 	} else {
 		p.log().Info("source fetch", "source", source.ID, "received", len(raws))
 	}

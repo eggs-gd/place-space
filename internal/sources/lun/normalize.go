@@ -30,6 +30,9 @@ type card struct {
 	GeoEntities []struct {
 		Type string `json:"type"`
 		Name string `json:"name"`
+		URL  *struct {
+			Link string `json:"link"`
+		} `json:"realtyGeoUrl"`
 	} `json:"geoEntities"`
 }
 

@@ -71,8 +71,8 @@ export function sourceName(type: string): string {
 	return type || 'Джерело';
 }
 
-export function sourceStatus(status: string): string {
-	if (status === 'healthy') return 'Працює';
+export function sourceStatus(status: string, lastError = ''): string {
+	if (status === 'healthy') return lastError ? 'Працює частково' : 'Працює';
 	if (status === 'error') return 'Помилка';
 	return 'Ще немає перевірки';
 }
@@ -93,6 +93,7 @@ export function criteria(watch: Watch): string[] {
 	const lines: string[] = [];
 	if (watch.deal === 'rent') lines.push('Оренда');
 	else if (watch.deal) lines.push(watch.deal);
+	if (watch.areas.length) lines.push(areaNames(watch.areas));
 	const currency = watch.currency || 'UAH';
 	if (watch.priceMax != null) lines.push(`≤ ${money(watch.priceMax, currency)}`);
 	if (watch.priceMin != null) lines.push(`≥ ${money(watch.priceMin, currency)}`);
@@ -135,6 +136,10 @@ export function reasonText(reason: Reason): string {
 		return `немає курсу ${currency[1]} до ${currency[2]}`;
 	}
 	return reason.message;
+}
+
+export function areaNames(areas: { name: string }[]): string {
+	return areas.map((item) => item.name).join(', ');
 }
 
 export function placeLine(listing: { address: string; title: string; location: string }): string {

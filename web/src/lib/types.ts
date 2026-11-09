@@ -48,6 +48,16 @@ export type ListingDetail = Card & {
 	duplicates: Duplicate[];
 };
 
+export type AreaRef = {
+	key: string;
+	name: string;
+};
+
+export type AreaOption = AreaRef & {
+	kind: string;
+	sources: string[];
+};
+
 export type Watch = {
 	id: string;
 	name: string;
@@ -55,6 +65,7 @@ export type Watch = {
 	city: string;
 	deal: string;
 	properties: string[];
+	areas: AreaRef[];
 	priceMin: number | null;
 	priceMax: number | null;
 	currency: string;

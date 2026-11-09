@@ -21,7 +21,50 @@ type criteriaBody struct {
 	RoomsMin   *int     `json:"roomsMin"`
 	AreaMin    *float64 `json:"areaMin"`
 	Properties []string `json:"properties"`
+	Areas      []string `json:"areas"`
 	Enabled    *bool    `json:"enabled"`
+}
+
+type areasBody struct {
+	Areas []application.AreaOption `json:"areas"`
+}
+
+func (s *Server) areas(w http.ResponseWriter, r *http.Request) {
+	city := strings.TrimSpace(r.URL.Query().Get("city"))
+	if city == "" || s.Areas == nil {
+		writeJSON(w, http.StatusOK, areasBody{Areas: []application.AreaOption{}})
+		return
+	}
+	options, err := s.Areas.List(r.Context(), city)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody{Error: "не вдалося завантажити райони цього міста"})
+		return
+	}
+	writeJSON(w, http.StatusOK, areasBody{Areas: options})
+}
+
+// resolveAreas fills the watch's areas and reports whether it may be saved.
+func (s *Server) resolveAreas(w http.ResponseWriter, r *http.Request, watch *domain.Watch, requested []string) bool {
+	if len(requested) == 0 {
+		watch.Query.Areas = nil
+		return true
+	}
+	if s.Areas == nil {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: "вибір районів недоступний"})
+		return false
+	}
+	refs, err := s.Areas.Resolve(r.Context(), watch.Query.City, requested)
+	var mistake *application.AreaError
+	if errors.As(err, &mistake) {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: mistake.Message})
+		return false
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody{Error: "не вдалося перевірити райони"})
+		return false
+	}
+	watch.Query.Areas = refs
+	return true
 }
 
 func (s *Server) createWatch(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +79,9 @@ func (s *Server) createWatch(w http.ResponseWriter, r *http.Request) {
 	}, body, true)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
+		return
+	}
+	if !s.resolveAreas(w, r, &watch, body.Areas) {
 		return
 	}
 	sourceIDs, err := application.EnsureDefaultSources(r.Context(), s.Store)
@@ -74,6 +120,9 @@ func (s *Server) updateWatch(w http.ResponseWriter, r *http.Request) {
 	updated, err := applyCriteria(current, body, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
+		return
+	}
+	if !s.resolveAreas(w, r, &updated, body.Areas) {
 		return
 	}
 	if err := s.Store.UpdateWatch(r.Context(), updated); err != nil {
@@ -159,8 +208,17 @@ func queryChanged(before, after domain.Query) bool {
 	if strings.TrimSpace(before.City) != strings.TrimSpace(after.City) || before.Deal != after.Deal {
 		return true
 	}
-	if len(before.Properties) != len(after.Properties) {
+	if len(before.Properties) != len(after.Properties) || len(before.Areas) != len(after.Areas) {
 		return true
+	}
+	areas := make(map[string]struct{}, len(before.Areas))
+	for _, area := range before.Areas {
+		areas[area.Key] = struct{}{}
+	}
+	for _, area := range after.Areas {
+		if _, ok := areas[area.Key]; !ok {
+			return true
+		}
 	}
 	seen := make(map[string]int, len(before.Properties))
 	for _, value := range before.Properties {
@@ -199,7 +257,12 @@ func watchBody(watch domain.Watch) watchJSON {
 	if properties == nil {
 		properties = []string{}
 	}
+	areas := watch.Query.Areas
+	if areas == nil {
+		areas = []domain.AreaRef{}
+	}
 	return watchJSON{
+		Areas:               areas,
 		ID:                  watch.ID,
 		Name:                watch.Name,
 		Enabled:             watch.Enabled,

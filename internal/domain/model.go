@@ -43,6 +43,10 @@ type Query struct {
 	City       string   `json:"city"`
 	Deal       string   `json:"deal"`
 	Properties []string `json:"properties,omitempty"`
+	// Areas narrows the search to parts of the city. Empty means the whole city.
+	Areas []AreaRef `json:"areas,omitempty"`
+	// AreaPaths is the current source's catalog pages for Areas, set per poll.
+	AreaPaths []string `json:"-"`
 }
 
 // Filters are deterministic predicates applied after normalization.

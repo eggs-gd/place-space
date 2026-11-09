@@ -49,7 +49,8 @@ func cmdServe(args []string) error {
 	}
 	defer store.Close()
 
-	schedule := newScheduler(store, *pages)
+	pipeline := newPipeline(store, *pages)
+	schedule := newScheduler(store, pipeline)
 	var polls sync.WaitGroup
 	startPolls := func() {
 		polls.Add(1)
@@ -61,7 +62,7 @@ func cmdServe(args []string) error {
 		}()
 	}
 
-	api := &httpapi.Server{Store: store, Refresh: schedule.Refresh}
+	api := &httpapi.Server{Store: store, Refresh: schedule.Refresh, Areas: pipeline.Areas}
 	handler := ui.Mount(api.Handler(), ui.Assets())
 	if *open {
 		err = openWindow(ctx, handler, func() {

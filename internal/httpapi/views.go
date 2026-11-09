@@ -25,18 +25,19 @@ type summaryBody struct {
 }
 
 type watchJSON struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Enabled             bool     `json:"enabled"`
-	City                string   `json:"city"`
-	Deal                string   `json:"deal"`
-	Properties          []string `json:"properties"`
-	PriceMin            *int64   `json:"priceMin"`
-	PriceMax            *int64   `json:"priceMax"`
-	Currency            string   `json:"currency"`
-	RoomsMin            *int     `json:"roomsMin"`
-	AreaMin             *float64 `json:"areaMin"`
-	PollIntervalSeconds int64    `json:"pollIntervalSeconds"`
+	ID                  string           `json:"id"`
+	Name                string           `json:"name"`
+	Enabled             bool             `json:"enabled"`
+	City                string           `json:"city"`
+	Deal                string           `json:"deal"`
+	Properties          []string         `json:"properties"`
+	Areas               []domain.AreaRef `json:"areas"`
+	PriceMin            *int64           `json:"priceMin"`
+	PriceMax            *int64           `json:"priceMax"`
+	Currency            string           `json:"currency"`
+	RoomsMin            *int             `json:"roomsMin"`
+	AreaMin             *float64         `json:"areaMin"`
+	PollIntervalSeconds int64            `json:"pollIntervalSeconds"`
 }
 
 type sourceJSON struct {
