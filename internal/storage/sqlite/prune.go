@@ -5,16 +5,16 @@ import (
 	"fmt"
 )
 
-// Age is measured from each source's latest productive check, so reopening
-// the app after a long break does not erase what it had collected.
 const latestBySourceCTE = `WITH latest AS (
 	SELECT source_id, MAX(started_at) AS at FROM poll_runs
 	WHERE received > 0 GROUP BY source_id
 ) `
 
-// Prune deletes listings unseen for 30 days, with their history, and check
-// records of the same age. A run that still anchors an observation stays, as
-// does the newest run of each watch and source.
+// Prune deletes listings the source has failed to show across 30 days of
+// checks, with their history, and check records of the same age. The span
+// starts at the first check that missed the listing, so reopening the app
+// after a long break erases nothing. A run that still anchors an observation
+// stays, as does the newest run of each watch and source.
 func (s *Store) Prune(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -25,6 +25,10 @@ func (s *Store) Prune(ctx context.Context) error {
 		SELECT l.id FROM listings l
 		JOIN latest ON latest.source_id = l.source
 		WHERE julianday(l.last_seen_at) < julianday(latest.at) - 30
+		AND julianday((
+			SELECT MIN(r.started_at) FROM poll_runs r
+			WHERE r.source_id = l.source AND r.received > 0 AND r.started_at > l.last_seen_at
+		)) <= julianday(latest.at) - 30
 	)`); err != nil {
 		return fmt.Errorf("prune listings: %w", err)
 	}

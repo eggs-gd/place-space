@@ -113,6 +113,7 @@ func TestPruneRemovesOldListingsAndKeepsRecent(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	f.save(t, "ancient", now.Add(-31*24*time.Hour))
+	f.save(t, "edge", now.Add(-30*24*time.Hour-time.Hour))
 	f.save(t, "month", now.Add(-29*24*time.Hour))
 	f.save(t, "live", now)
 
@@ -126,25 +127,27 @@ func TestPruneRemovesOldListingsAndKeepsRecent(t *testing.T) {
 	if len(gone) != 0 {
 		t.Fatalf("ancient listing kept: %+v", gone)
 	}
-	kept, err := f.store.ListingsByKeys(ctx, f.source.ID, []string{"month", "live"}, nil)
+	// "edge" was last missed only 29 days ago: the check that first missed it
+	// is the one that found "month".
+	kept, err := f.store.ListingsByKeys(ctx, f.source.ID, []string{"edge", "month", "live"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(kept) != 2 {
+	if len(kept) != 3 {
 		t.Fatalf("kept %+v", kept)
 	}
 	observations, err := f.store.CountObservations(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observations != 2 {
+	if observations != 3 {
 		t.Fatalf("observations %d", observations)
 	}
 	runs, err := f.store.RecentRuns(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 2 {
+	if len(runs) != 3 {
 		t.Fatalf("runs %d", len(runs))
 	}
 }
@@ -153,6 +156,8 @@ func TestPruneIgnoresAppDowntime(t *testing.T) {
 	f := newRetentionFixture(t)
 	ctx := context.Background()
 	f.save(t, "old", time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+	// The app comes back months later and the listing is no longer shown.
+	f.save(t, "live", time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC))
 	if err := f.store.Prune(ctx); err != nil {
 		t.Fatal(err)
 	}
