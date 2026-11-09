@@ -47,11 +47,12 @@ func (s *Store) MergeAreas(ctx context.Context, sourceType, cityKey string, area
 	}
 	defer tx.Rollback()
 	for _, area := range areas {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO areas (source_type, city_key, area_key, name, kind, path)
-			VALUES (?, ?, ?, ?, ?, ?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO areas (source_type, city_key, area_key, name, kind, path, parent_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (source_type, city_key, area_key) DO UPDATE SET
-				name = excluded.name, kind = excluded.kind, path = excluded.path`,
-			sourceType, cityKey, area.Key, area.Name, area.Kind, area.Path); err != nil {
+				name = excluded.name, kind = excluded.kind, path = excluded.path,
+				parent_key = CASE WHEN excluded.parent_key != '' THEN excluded.parent_key ELSE parent_key END`,
+			sourceType, cityKey, area.Key, area.Name, area.Kind, area.Path, area.Parent); err != nil {
 			return fmt.Errorf("save area %s: %w", area.Key, err)
 		}
 	}
@@ -65,7 +66,7 @@ func (s *Store) MergeAreas(ctx context.Context, sourceType, cityKey string, area
 
 // AreasForCity returns every source's areas for a city, LUN's names first.
 func (s *Store) AreasForCity(ctx context.Context, cityKey string) ([]SourceArea, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT source_type, area_key, name, kind, path FROM areas
+	rows, err := s.db.QueryContext(ctx, `SELECT source_type, area_key, name, kind, path, parent_key FROM areas
 		WHERE city_key = ? ORDER BY area_key, source_type DESC`, cityKey)
 	if err != nil {
 		return nil, fmt.Errorf("list areas: %w", err)
@@ -74,7 +75,7 @@ func (s *Store) AreasForCity(ctx context.Context, cityKey string) ([]SourceArea,
 	out := []SourceArea{}
 	for rows.Next() {
 		var area SourceArea
-		if err := rows.Scan(&area.Source, &area.Key, &area.Name, &area.Kind, &area.Path); err != nil {
+		if err := rows.Scan(&area.Source, &area.Key, &area.Name, &area.Kind, &area.Path, &area.Parent); err != nil {
 			return nil, err
 		}
 		out = append(out, area)

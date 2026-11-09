@@ -3,6 +3,7 @@ package domria
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,7 +21,11 @@ func serve(t *testing.T, handler http.HandlerFunc) *Adapter {
 }
 
 func TestAreasReadRayonLinks(t *testing.T) {
-	adapter := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+	adapter := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "-rayon-") {
+			_, _ = w.Write([]byte(catalogWithDistricts()))
+			return
+		}
 		_, _ = w.Write([]byte(`<html>
 <a data-level="area" href="/uk/arenda-kvartir/kiev-rayon-darnytskyi/" class="x">
    Дарницький
@@ -128,5 +133,97 @@ func TestCleanPathAcceptsOnlyCatalogPaths(t *testing.T) {
 		if _, err := cleanPath(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func catalogWithDistricts(names ...string) string {
+	cards := make([]string, 0, len(names))
+	for i, name := range names {
+		cards = append(cards, fmt.Sprintf(`{"realty_id":%d,"district_name_uk":%q}`, i+1, name))
+	}
+	return `window.__INITIAL_STATE__={"catalog":{"realtyForCatalog":[` + strings.Join(cards, ",") + `],"realtyCountCatalog":9}};`
+}
+
+const areaLinks = `<a href="/uk/arenda-kvartir/kiev-rayon-darnytskyi/">Дарницький</a>
+<a href="/uk/arenda-kvartir/kiev-rayon-osokorky/">Осокорки</a>`
+
+func TestAreasReadWhatLiesInsideDistricts(t *testing.T) {
+	var opened []string
+	adapter := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		opened = append(opened, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "-darnytskyi/") {
+			_, _ = w.Write([]byte(catalogWithDistricts("Дарницький", "Осокорки", "Осокорки")))
+			return
+		}
+		_, _ = w.Write([]byte(areaLinks))
+	})
+	areas, err := adapter.Areas(context.Background(), "Київ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if areas[0].Parent != "" || areas[1].Key != "осокорки" || areas[1].Parent != "дарницький" {
+		t.Fatalf("areas %+v", areas)
+	}
+}
+
+func TestAreasAreIncompleteWhenDistrictPageFails(t *testing.T) {
+	adapter := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "-rayon-") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(areaLinks))
+	})
+	areas, err := adapter.Areas(context.Background(), "Київ")
+	if !errors.Is(err, sources.ErrIncompleteAreas) || len(areas) != 2 {
+		t.Fatalf("areas %+v err %v", areas, err)
+	}
+}
+
+func TestAreasFindChildrenOnLaterDistrictPages(t *testing.T) {
+	var pages []string
+	adapter := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "-darnytskyi/") {
+			_, _ = w.Write([]byte(areaLinks))
+			return
+		}
+		pages = append(pages, r.URL.Query().Get("page"))
+		if r.URL.Query().Get("page") == "3" {
+			_, _ = w.Write([]byte(`window.__INITIAL_STATE__={"catalog":{"realtyForCatalog":[{"realty_id":3,"district_name_uk":"Осокорки"}],"realtyCountCatalog":3}};`))
+			return
+		}
+		page := r.URL.Query().Get("page")
+		id := 1
+		if page == "2" {
+			id = 2
+		}
+		_, _ = fmt.Fprintf(w, `window.__INITIAL_STATE__={"catalog":{"realtyForCatalog":[{"realty_id":%d,"district_name_uk":"Дарницький"}],"realtyCountCatalog":3}};`, id)
+	})
+	areas, err := adapter.Areas(context.Background(), "Київ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if areas[1].Parent != "дарницький" {
+		t.Fatalf("areas %+v", areas)
+	}
+	if strings.Join(pages, ",") != ",2,3" {
+		t.Fatalf("pages %q", pages)
+	}
+}
+
+func TestAreasKeepEarlierPagesWhenALaterOneFails(t *testing.T) {
+	adapter := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case !strings.HasSuffix(r.URL.Path, "-darnytskyi/"):
+			_, _ = w.Write([]byte(areaLinks))
+		case r.URL.Query().Get("page") == "2":
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			_, _ = w.Write([]byte(catalogWithDistricts("Осокорки")))
+		}
+	})
+	areas, err := adapter.Areas(context.Background(), "Київ")
+	if !errors.Is(err, sources.ErrIncompleteAreas) || areas[1].Parent != "дарницький" {
+		t.Fatalf("areas %+v err %v", areas, err)
 	}
 }
