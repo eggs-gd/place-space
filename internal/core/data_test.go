@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,9 +66,7 @@ func TestAdoptLegacyCopiesUncheckpointedData(t *testing.T) {
 	if _, err := os.Stat(legacy); err != nil {
 		t.Fatalf("legacy database is gone: %v", err)
 	}
-	if _, err := os.Stat(target + ".partial"); !os.IsNotExist(err) {
-		t.Fatalf("partial file left: %v", err)
-	}
+	assertNoPartials(t, target)
 }
 
 func TestAdoptLegacyKeepsExistingTarget(t *testing.T) {
@@ -105,4 +104,80 @@ func TestAdoptLegacyWithoutOldDatabase(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "new.db")); !os.IsNotExist(err) {
 		t.Fatal("target created without anything to copy")
 	}
+}
+
+func assertNoPartials(t *testing.T, target string) {
+	t.Helper()
+	left, err := filepath.Glob(target + ".partial*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) > 0 {
+		t.Fatalf("partial files left: %v", left)
+	}
+}
+
+func TestPublishKeepsDatabaseThatAppeared(t *testing.T) {
+	dir := t.TempDir()
+	partial := filepath.Join(dir, "copy.partial")
+	target := filepath.Join(dir, DBName)
+	if err := os.WriteFile(partial, []byte("legacy copy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("already in use"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	published, err := publish(partial, target)
+	if err != nil || published {
+		t.Fatalf("published=%v err=%v", published, err)
+	}
+	body, err := os.ReadFile(target)
+	if err != nil || string(body) != "already in use" {
+		t.Fatalf("target replaced: %q %v", body, err)
+	}
+}
+
+func TestAdoptLegacyConcurrentStarts(t *testing.T) {
+	ctx := context.Background()
+	legacy := filepath.Join(t.TempDir(), DBName)
+	old, err := sqlite.Open(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	target := filepath.Join(t.TempDir(), DBName)
+	const starts = 8
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		copies int
+		errs   []error
+	)
+	for i := 0; i < starts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			copied, err := AdoptLegacy(ctx, legacy, target)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+			}
+			if copied {
+				copies++
+			}
+		}()
+	}
+	wg.Wait()
+	if len(errs) > 0 {
+		t.Fatalf("errors: %v", errs)
+	}
+	if copies != 1 {
+		t.Fatalf("%d starts copied the database, want 1", copies)
+	}
+	assertNoPartials(t, target)
 }

@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -58,10 +60,13 @@ func AdoptLegacy(ctx context.Context, legacy, target string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return false, fmt.Errorf("create data directory: %w", err)
 	}
-	partial := target + ".partial"
-	if err := os.Remove(partial); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	// Each process copies into a file of its own, so two programs starting
+	// at once never touch each other's copy.
+	partial, err := partialPath(target)
+	if err != nil {
 		return false, err
 	}
+	defer os.Remove(partial)
 	old, err := sqlite.Open(legacy)
 	if err != nil {
 		return false, err
@@ -71,14 +76,39 @@ func AdoptLegacy(ctx context.Context, legacy, target string) (bool, error) {
 		err = closeErr
 	}
 	if err != nil {
-		_ = os.Remove(partial)
 		return false, fmt.Errorf("copy %s: %w", legacy, err)
 	}
+	return publish(partial, target)
+}
+
+// publish puts the finished copy in place unless a database appeared there in
+// the meantime: another instance that got there first may already be writing
+// to it. A hard link fails instead of replacing; rename would replace it.
+func publish(partial, target string) (bool, error) {
+	err := os.Link(partial, target)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	// The file system has no hard links. Rename is the fallback, with only
+	// the moment between the check and the rename left open.
+	if exists, statErr := fileExists(target); statErr != nil || exists {
+		return false, statErr
+	}
 	if err := os.Rename(partial, target); err != nil {
-		_ = os.Remove(partial)
 		return false, err
 	}
 	return true, nil
+}
+
+func partialPath(target string) (string, error) {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s.partial-%d-%s", target, os.Getpid(), hex.EncodeToString(suffix[:])), nil
 }
 
 func fileExists(path string) (bool, error) {
