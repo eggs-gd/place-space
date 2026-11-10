@@ -13,24 +13,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/eggs-gd/place-space/internal/httpapi"
-	"github.com/eggs-gd/place-space/internal/ui"
+	"github.com/eggs-gd/place-space/internal/core"
 )
 
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	dbPath := fs.String("db", defaultDBPath(), "шлях до SQLite")
+	dbPath := fs.String("db", "", dbFlagHelp)
 	addr := fs.String("addr", "127.0.0.1:8080", "адреса API")
-	pages := fs.Int("pages", 5, "максимум сторінок пошуку на кожен тип житла")
+	pages := fs.Int("pages", core.DefaultPages, "максимум сторінок пошуку на кожен тип житла")
 	open := fs.Bool("open", false, "відкрити інтерфейс у власному вікні")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *open {
-		if err := setupAppLog(*dbPath); err != nil {
-			slog.Error("log file", "err", err)
-		}
 	}
 	// On macOS, signal handlers installed before the native window exists
 	// make AppKit abort while it is still launching. The window path arms
@@ -43,27 +37,37 @@ func cmdServe(args []string) error {
 		ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	}
 	defer stop()
-	store, err := openStore(ctx, *dbPath)
+	location, err := locateDB(*dbPath)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	if *open {
+		if err := setupAppLog(location.path); err != nil {
+			slog.Error("log file", "err", err)
+		}
+	}
+	if err := location.adopt(ctx); err != nil {
+		return err
+	}
+	slog.Info("database", "path", location.path)
+	app, err := core.Open(ctx, core.Options{DBPath: location.path, Pages: *pages})
+	if err != nil {
+		return err
+	}
+	defer app.Close()
 
-	pipeline := newPipeline(store, *pages)
-	schedule := newScheduler(store, pipeline)
 	var polls sync.WaitGroup
 	startPolls := func() {
 		polls.Add(1)
 		go func() {
 			defer polls.Done()
-			if err := pollLoop(ctx, store, schedule); err != nil && ctx.Err() == nil {
+			if err := app.Run(ctx); err != nil && ctx.Err() == nil {
 				slog.Error("scheduler stopped", "err", err)
 			}
 		}()
 	}
 
-	api := &httpapi.Server{Store: store, Refresh: schedule.Refresh, Areas: pipeline.Areas}
-	handler := ui.Mount(api.Handler(), ui.Assets())
+	handler := app.Handler()
 	if *open {
 		err = openWindow(ctx, handler, func() {
 			armSignals(stop)

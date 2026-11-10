@@ -52,6 +52,13 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// CopyTo writes a consistent copy of the database, including changes still in
+// the WAL, to a file that must not exist yet.
+func (s *Store) CopyTo(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, path)
+	return err
+}
+
 // Migrate applies SQL files that have not been recorded yet.
 func (s *Store) Migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (

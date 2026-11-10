@@ -93,5 +93,7 @@ jobs:
             dist/place-space-macos.zip
           body: |
             Windows: запустіть place-space.exe. Mac: розпакуйте Place Space.app.
-            Відкриється власне вікно, база з’явиться поруч у папці data.
-            Закриття вікна зупиняє перевірки. Журнал — data/place-space.log.
+            Відкриється власне вікно. Закриття вікна зупиняє перевірки.
+            База і журнал лежать у %AppData%\Place Space на Windows
+            і в ~/Library/Application Support/Place Space на Mac.
+            База з папки data поруч зі старою версією копіюється туди під час першого запуску.
