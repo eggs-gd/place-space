@@ -16,13 +16,8 @@ import (
 	"time"
 
 	"github.com/eggs-gd/place-space/internal/application"
+	"github.com/eggs-gd/place-space/internal/core"
 	"github.com/eggs-gd/place-space/internal/domain"
-	"github.com/eggs-gd/place-space/internal/rates"
-	"github.com/eggs-gd/place-space/internal/scheduler"
-	"github.com/eggs-gd/place-space/internal/sources"
-	"github.com/eggs-gd/place-space/internal/sources/domria"
-	"github.com/eggs-gd/place-space/internal/sources/lun"
-	"github.com/eggs-gd/place-space/internal/storage/sqlite"
 )
 
 func main() {
@@ -76,7 +71,7 @@ run перевіряє джерела без HTTP.
 func cmdPoll(args []string) error {
 	fs := flag.NewFlagSet("poll", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	dbPath := fs.String("db", "data/place-space.db", "шлях до SQLite")
+	dbPath := fs.String("db", "", dbFlagHelp)
 	name := fs.String("name", "", "назва watch; за замовчуванням — місто")
 	city := fs.String("city", "", "місто або шлях LUN, наприклад /rent/kyiv/flats")
 	deal := fs.String("deal", domain.DealRent, "тип угоди")
@@ -108,29 +103,25 @@ func cmdPoll(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, err := openStore(ctx, *dbPath)
+	app, err := openCore(ctx, *dbPath, *pages)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer app.Close()
 
-	sourceIDs, err := application.EnsureDefaultSources(ctx, store)
-	if err != nil {
-		return err
-	}
-	pipeline := newPipeline(store, *pages)
-	areaRefs, err := pipeline.Areas.Resolve(ctx, *city, splitList(*areas))
+	areaRefs, err := app.Pipeline.Areas.Resolve(ctx, *city, splitList(*areas))
 	if err != nil {
 		return err
 	}
 	watch := domain.Watch{
 		Name:         *name,
 		Enabled:      true,
-		SourceIDs:    sourceIDs,
+		SourceIDs:    app.SourceIDs,
 		Query:        domain.Query{City: *city, Deal: *deal, Properties: properties, Areas: areaRefs},
 		Filters:      domain.Filters{PriceMin: priceMin.value, PriceMax: priceMax.value, Currency: *currency, RoomsMin: roomsMin.value, AreaMin: areaMin.value},
 		PollInterval: *interval,
 	}
+	store := app.Store
 	existing, found, err := store.FindWatchByName(ctx, watch.Name)
 	if err != nil {
 		return err
@@ -141,9 +132,6 @@ func cmdPoll(args []string) error {
 		if err := store.UpdateWatch(ctx, watch); err != nil {
 			return err
 		}
-		if watch, err = store.GetWatch(ctx, watch.ID); err != nil {
-			return err
-		}
 	} else {
 		watch, err = store.CreateWatch(ctx, watch)
 		if err != nil {
@@ -151,96 +139,57 @@ func cmdPoll(args []string) error {
 		}
 	}
 
-	report, err := pipeline.PollWatch(ctx, watch)
-	if err != nil {
-		return err
+	report, pollErr := app.Poll(ctx, watch.ID)
+	if pollErr != nil && !application.HasErrors(report) {
+		return pollErr
 	}
 	if err := writeJSON(os.Stdout, application.View(report)); err != nil {
 		return err
 	}
-	if application.HasErrors(report) {
-		return errors.New("перевірка джерела завершилась з помилками")
-	}
-	return nil
+	return pollErr
 }
 
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	dbPath := fs.String("db", "data/place-space.db", "шлях до SQLite")
+	dbPath := fs.String("db", "", dbFlagHelp)
 	pages := fs.Int("pages", 5, "максимум сторінок пошуку на кожен тип житла")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	store, err := openStore(ctx, *dbPath)
+	app, err := openCore(ctx, *dbPath, *pages)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-	return pollLoop(ctx, store, newScheduler(store, newPipeline(store, *pages)))
+	defer app.Close()
+	return app.Run(ctx)
 }
 
-func newPipeline(store *sqlite.Store, pages int) *application.Pipeline {
-	adapters := map[string]sources.Adapter{
-		"lun":    lun.New(lun.Options{MaxPages: pages}),
-		"domria": domria.New(domria.Options{MaxPages: pages}),
+func openCore(ctx context.Context, explicit string, pages int) (*core.Core, error) {
+	path, err := resolveDBPath(ctx, explicit)
+	if err != nil {
+		return nil, err
 	}
-	return &application.Pipeline{
-		Store:    store,
-		Adapters: adapters,
-		Rates:    &rates.Cache{Store: store, Fetcher: &rates.NBU{}, Log: slog.Default()},
-		Areas:    &application.AreaDirectory{Store: store, Adapters: adapters, Log: slog.Default()},
-		Log:      slog.Default(),
-	}
-}
-
-func newScheduler(store *sqlite.Store, pipeline *application.Pipeline) *scheduler.Scheduler {
-	return scheduler.New(store.ListWatches, func(ctx context.Context, watch domain.Watch) error {
-		fresh, err := store.GetWatch(ctx, watch.ID)
-		if err != nil {
-			return err
-		}
-		if !fresh.Enabled {
-			return nil
-		}
-		report, err := pipeline.PollWatch(ctx, fresh)
-		if err != nil {
-			return err
-		}
-		if err := store.Prune(ctx); err != nil {
-			slog.Warn("prune", "err", err)
-		}
-		if application.HasErrors(report) {
-			return errors.New("перевірка джерела завершилась з помилками")
-		}
-		return nil
-	}, slog.Default())
-}
-
-func pollLoop(ctx context.Context, store *sqlite.Store, schedule *scheduler.Scheduler) error {
-	if _, err := application.EnsureDefaultSources(ctx, store); err != nil {
-		return err
-	}
-	slog.Info("scheduler started")
-	return schedule.Run(ctx)
+	return core.Open(ctx, core.Options{DBPath: path, Pages: pages})
 }
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	dbPath := fs.String("db", "data/place-space.db", "шлях до SQLite")
+	dbPath := fs.String("db", "", dbFlagHelp)
 	limit := fs.Int("limit", 20, "скільки останніх запусків показати")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	ctx := context.Background()
-	store, err := openStore(ctx, *dbPath)
+	app, err := openCore(ctx, *dbPath, 0)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer app.Close()
+	store := app.Store
 	sources, err := store.ListSources(ctx)
 	if err != nil {
 		return err
@@ -258,18 +207,6 @@ func cmdStatus(args []string) error {
 		"watches": watchesView(watches),
 		"runs":    runsView(runs),
 	})
-}
-
-func openStore(ctx context.Context, path string) (*sqlite.Store, error) {
-	store, err := sqlite.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	if err := store.Migrate(ctx); err != nil {
-		store.Close()
-		return nil, err
-	}
-	return store, nil
 }
 
 func writeJSON(w io.Writer, value any) error {

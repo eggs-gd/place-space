@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,10 +11,56 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/eggs-gd/place-space/internal/core"
 )
 
-func defaultDBPath() string {
-	return dbPathForExe(executablePath())
+const dbFlagHelp = "шлях до SQLite; типово каталог даних користувача"
+
+// dbLocation is the database a command uses and, for a built program, the
+// place older versions kept it.
+type dbLocation struct {
+	path   string
+	legacy string
+}
+
+// locateDB picks the database. An explicit path wins. A program started by
+// go run keeps data/ in the working directory, as during development. A built
+// program uses the user data directory, or PLACE_SPACE_DATA when set.
+func locateDB(explicit string) (dbLocation, error) {
+	if explicit != "" {
+		return dbLocation{path: explicit}, nil
+	}
+	exe := executablePath()
+	_, custom := os.LookupEnv(core.DataDirEnv)
+	if !custom && devBuild(exe) {
+		return dbLocation{path: filepath.Join("data", core.DBName)}, nil
+	}
+	dir, err := core.DefaultDataDir()
+	if err != nil {
+		return dbLocation{}, err
+	}
+	return dbLocation{path: filepath.Join(dir, core.DBName), legacy: legacyDBPath(exe)}, nil
+}
+
+// adopt carries over a database from the place older versions kept it.
+func (l dbLocation) adopt(ctx context.Context) error {
+	copied, err := core.AdoptLegacy(ctx, l.legacy, l.path)
+	if err != nil {
+		return err
+	}
+	if copied {
+		slog.Info("database copied from the old location", "from", l.legacy, "to", l.path)
+	}
+	return nil
+}
+
+func resolveDBPath(ctx context.Context, explicit string) (string, error) {
+	location, err := locateDB(explicit)
+	if err != nil {
+		return "", err
+	}
+	return location.path, location.adopt(ctx)
 }
 
 func executablePath() string {
@@ -27,21 +74,22 @@ func executablePath() string {
 	return exe
 }
 
-func dbPathForExe(exe string) string {
-	rel := filepath.Join("data", "place-space.db")
-	if exe == "" {
-		return rel
+func devBuild(exe string) bool {
+	return exe == "" || strings.Contains(filepath.ToSlash(filepath.Dir(exe)), "/go-build")
+}
+
+// legacyDBPath is where versions up to 0.0.7 kept the database: in data/ next
+// to the program, or next to the .app bundle on macOS.
+func legacyDBPath(exe string) string {
+	if devBuild(exe) {
+		return ""
 	}
 	dir := filepath.Dir(exe)
-	if strings.Contains(filepath.ToSlash(dir), "/go-build") {
-		return rel
-	}
-	// Place Space.app/Contents/MacOS/place-space → data поруч із .app, не всередині бандла.
 	if filepath.Base(dir) == "MacOS" && filepath.Base(filepath.Dir(dir)) == "Contents" {
 		bundle := filepath.Dir(filepath.Dir(dir))
-		return filepath.Join(filepath.Dir(bundle), "data", "place-space.db")
+		return filepath.Join(filepath.Dir(bundle), "data", core.DBName)
 	}
-	return filepath.Join(dir, rel)
+	return filepath.Join(dir, "data", core.DBName)
 }
 
 func setupAppLog(dbPath string) error {
@@ -49,7 +97,7 @@ func setupAppLog(dbPath string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(filepath.Join(dir, "place-space.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(filepath.Join(dir, core.LogName), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
