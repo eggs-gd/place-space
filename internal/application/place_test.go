@@ -34,6 +34,7 @@ type geoAdapter struct {
 	located  map[string][2]float64
 	queries  []domain.Query
 	locates  int
+	blocked  bool
 }
 
 func (a *geoAdapter) Type() string { return a.kind }
@@ -67,6 +68,9 @@ func (a *geoAdapter) Normalize(_ context.Context, raw sources.RawListing) (domai
 
 func (a *geoAdapter) Locate(_ context.Context, listing domain.Listing) (float64, float64, error) {
 	a.locates++
+	if a.blocked {
+		return 0, 0, fmt.Errorf("status 429: %w", sources.ErrBlocked)
+	}
 	point, ok := a.located[listing.ExternalID]
 	if !ok {
 		return 0, 0, fmt.Errorf("no coordinates")
@@ -264,5 +268,62 @@ func TestLocateSkipsListingsRejectedAnyway(t *testing.T) {
 	}
 	if otodim.locates != 0 {
 		t.Fatalf("read %d listing pages for a listing over the price limit", otodim.locates)
+	}
+}
+
+func TestOtherWatchKeepsFoundCoordinates(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	seedLUN(t, store)
+	otodim := &geoAdapter{kind: "otodim", listings: []geoListing{{id: "east"}},
+		located: map[string][2]float64{"east": darnytskyi}}
+	p := &Pipeline{Store: store, Places: &PlaceIndex{Store: store},
+		Adapters: map[string]sources.Adapter{"otodim": nearGeoAdapter{otodim}}}
+	areaWatch, err := store.CreateWatch(ctx, domain.Watch{Name: "Дарницький", Enabled: true, SourceIDs: []string{"otodim"},
+		Query:        domain.Query{City: "Київ", Deal: domain.DealRent, Areas: []domain.AreaRef{{Key: "дарницький", Name: "Дарницький"}}},
+		PollInterval: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cityWatch, err := store.CreateWatch(ctx, domain.Watch{Name: "Київ", Enabled: true, SourceIDs: []string{"otodim"},
+		Query: domain.Query{City: "Київ", Deal: domain.DealRent}, PollInterval: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, watch := range []domain.Watch{areaWatch, cityWatch, areaWatch} {
+		if _, err := p.PollWatch(ctx, watch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if otodim.locates != 1 {
+		t.Fatalf("listing page read %d times; a watch without areas wiped the coordinates", otodim.locates)
+	}
+	stored, err := store.ListingsByKeys(ctx, "otodim", []string{"east"}, nil)
+	if err != nil || len(stored) != 1 || stored[0].Location.Latitude == nil {
+		t.Fatalf("stored %+v err %v", stored, err)
+	}
+}
+
+func TestRefusedListingPageRestsTheSource(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	seedLUN(t, store)
+	otodim := &geoAdapter{kind: "otodim", blocked: true, listings: []geoListing{{id: "a"}, {id: "b"}, {id: "c"}}}
+	p := &Pipeline{Store: store, Places: &PlaceIndex{Store: store},
+		Adapters: map[string]sources.Adapter{"otodim": nearGeoAdapter{otodim}}}
+	watch, err := store.CreateWatch(ctx, domain.Watch{Name: "Київ", Enabled: true, SourceIDs: []string{"otodim"},
+		Query:        domain.Query{City: "Київ", Deal: domain.DealRent, Areas: []domain.AreaRef{{Key: "дарницький", Name: "Дарницький"}}},
+		PollInterval: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.PollWatch(ctx, watch); err != nil {
+		t.Fatal(err)
+	}
+	if otodim.locates != 1 {
+		t.Fatalf("kept reading after a refusal: %d requests", otodim.locates)
+	}
+	if !p.resting("otodim") {
+		t.Fatal("refusal did not rest the source")
 	}
 }

@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/eggs-gd/place-space/internal/domain"
@@ -35,19 +36,21 @@ func areaSet(refs []domain.AreaRef) map[string]bool {
 	return out
 }
 
-// locate returns coordinates for listings whose catalog omitted them: the
-// stored ones, or, when the source can tell, the listing page's. Pages are
-// read only for listings that pass the other limits: the rest are rejected
-// wherever they are.
-func (p *Pipeline) locate(ctx context.Context, check placeCheck, adapter sources.Adapter, filters domain.Filters, rates domain.Rates, listings []domain.Listing, existing []domain.Listing) map[string][2]float64 {
+// locate returns coordinates for listings whose catalog omitted them. Stored
+// ones are always returned: the listing row is shared by every watch, and a
+// catalog without coordinates would otherwise wipe what another watch found.
+// Listing pages are read only when this watch checks place, and only for
+// listings that pass the other limits: the rest are rejected wherever they
+// are. A refusal stops the reading and rests the source.
+func (p *Pipeline) locate(ctx context.Context, check placeCheck, source domain.Source, adapter sources.Adapter, filters domain.Filters, rates domain.Rates, listings []domain.Listing, existing []domain.Listing) map[string][2]float64 {
 	points := map[string][2]float64{}
-	if !check.needsPoint() {
-		return points
-	}
 	for _, listing := range existing {
 		if listing.Location.Latitude != nil && listing.Location.Longitude != nil {
 			points[listing.ExternalID] = [2]float64{*listing.Location.Latitude, *listing.Location.Longitude}
 		}
+	}
+	if !check.needsPoint() {
+		return points
 	}
 	locator, ok := adapter.(sources.Locator)
 	if !ok {
@@ -78,8 +81,13 @@ func (p *Pipeline) locate(ctx context.Context, check placeCheck, adapter sources
 		}
 		read++
 		lat, lng, err := locator.Locate(ctx, listing)
+		if errors.Is(err, sources.ErrBlocked) {
+			p.log().Warn("locate listing refused", "source", source.ID, "err", err)
+			p.rest(source.ID)
+			return points
+		}
 		if err != nil {
-			p.log().Warn("locate listing", "source", adapter.Type(), "listing", listing.ExternalID, "err", err)
+			p.log().Warn("locate listing", "source", source.ID, "listing", listing.ExternalID, "err", err)
 			continue
 		}
 		points[listing.ExternalID] = [2]float64{lat, lng}

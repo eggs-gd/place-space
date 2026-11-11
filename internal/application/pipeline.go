@@ -266,7 +266,7 @@ func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, check pla
 	if err != nil {
 		return Classified{}, fmt.Errorf("load listings: %w", err)
 	}
-	points := p.locate(ctx, check, adapter, watch.Filters, rates, normalized, existing)
+	points := p.locate(ctx, check, source, adapter, watch.Filters, rates, normalized, existing)
 	matches, err := p.Store.MatchesForWatch(ctx, watch.ID)
 	if err != nil {
 		return Classified{}, fmt.Errorf("load matches: %w", err)
