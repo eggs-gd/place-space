@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ListingCard from '$lib/ListingCard.svelte';
-	import { ago, areaNames, freshLabel, placesLabel, sourceName, sourceStatus } from '$lib/format';
+	import { ago, areaNames, freshLabel, nearLabel, placesLabel, sourceName, sourceStatus } from '$lib/format';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -36,6 +36,9 @@
 	<p class="summary">
 		{#if watch.areas.length}
 			{areaNames(watch.areas)} ·
+		{/if}
+		{#if watch.near}
+			{nearLabel(watch.near)} ·
 		{/if}
 		{placesLabel(summary.places)} · {freshLabel(summary.new)}
 		{#if data.overview.run}

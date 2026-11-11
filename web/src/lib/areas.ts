@@ -43,12 +43,7 @@ export function isCovered(option: AreaOption, selected: string[]): boolean {
 }
 
 /** The selection after ticking or clearing one area. A district absorbs its areas. */
-export function toggleArea(
-	selected: string[],
-	option: AreaOption,
-	on: boolean,
-	options: AreaOption[]
-): string[] {
+export function toggleArea(selected: string[], option: AreaOption, on: boolean, options: AreaOption[]): string[] {
 	if (!on) return selected.filter((key) => key !== option.key);
 	if (selected.includes(option.key) || isCovered(option, selected)) return selected;
 	const inside = new Set(options.filter((item) => item.parent === option.key).map((item) => item.key));

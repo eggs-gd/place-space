@@ -59,6 +59,21 @@ export type AreaOption = AreaRef & {
 	sources: string[];
 };
 
+export type Near = {
+	name: string;
+	radiusMeters: number;
+};
+
+export type KeyState = {
+	set: boolean;
+	hint: string;
+	fromEnv: boolean;
+};
+
+export type Settings = {
+	googleKey: KeyState;
+};
+
 export type Watch = {
 	id: string;
 	name: string;
@@ -67,6 +82,7 @@ export type Watch = {
 	deal: string;
 	properties: string[];
 	areas: AreaRef[];
+	near: Near | null;
 	priceMin: number | null;
 	priceMax: number | null;
 	currency: string;

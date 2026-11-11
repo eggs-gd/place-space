@@ -12,7 +12,8 @@ import {
 	reasonText,
 	roomsLabel,
 	sourceName,
-	sourceStatus
+	sourceStatus,
+	distanceLabel
 } from './format';
 import type { Reason, Watch } from './types';
 
@@ -32,6 +33,7 @@ function watch(overrides: Partial<Watch>): Watch {
 		deal: 'rent',
 		properties: ['apartment'],
 		areas: [],
+		near: null,
 		priceMin: null,
 		priceMax: null,
 		currency: '',
@@ -75,9 +77,7 @@ describe('plural labels', () => {
 describe('facts', () => {
 	const base = { rooms: null, area: null, floor: null, totalFloors: null };
 	it('joins what is known', () => {
-		expect(facts({ rooms: 2, area: 62.5, floor: 3, totalFloors: 9 })).toBe(
-			`2 кімнати · ${area(62.5)} · 3/9`
-		);
+		expect(facts({ rooms: 2, area: 62.5, floor: 3, totalFloors: 9 })).toBe(`2 кімнати · ${area(62.5)} · 3/9`);
 	});
 	it('handles a floor without a total and an empty listing', () => {
 		expect(facts({ ...base, floor: 4 })).toBe('4 поверх');
@@ -104,6 +104,7 @@ describe('source labels', () => {
 	it('names known sources', () => {
 		expect(sourceName('lun')).toBe('LUN');
 		expect(sourceName('domria')).toBe('DOM.RIA');
+		expect(sourceName('otodim')).toBe('Otodim');
 		expect(sourceName('')).toBe('Джерело');
 	});
 	it('describes status', () => {
@@ -128,17 +129,8 @@ describe('intervalLabel', () => {
 
 describe('criteria', () => {
 	it('lists every bound', () => {
-		const lines = criteria(
-			watch({ priceMax: 20000, priceMin: 5000, roomsMin: 2, areaMin: 40 })
-		).map(plain);
-		expect(lines).toEqual([
-			'Оренда',
-			'≤ 20 000 ₴',
-			'≥ 5 000 ₴',
-			'Квартира',
-			'2+ кімнати',
-			`від ${plain(area(40))}`
-		]);
+		const lines = criteria(watch({ priceMax: 20000, priceMin: 5000, roomsMin: 2, areaMin: 40 })).map(plain);
+		expect(lines).toEqual(['Оренда', '≤ 20 000 ₴', '≥ 5 000 ₴', 'Квартира', '2+ кімнати', `від ${plain(area(40))}`]);
 	});
 	it('names chosen areas', () => {
 		const areas = [
@@ -148,17 +140,13 @@ describe('criteria', () => {
 		expect(criteria(watch({ areas }))).toContain('Дарницький, Осокорки');
 	});
 	it('names both property types', () => {
-		expect(criteria(watch({ properties: ['apartment', 'house'] }))).toContain(
-			'Квартира або будинок'
-		);
+		expect(criteria(watch({ properties: ['apartment', 'house'] }))).toContain('Квартира або будинок');
 	});
 });
 
 describe('reasonText', () => {
 	it('explains a price over the limit', () => {
-		expect(plain(reasonText(reason('price', 'price: 22500 > 20000')))).toBe(
-			'22 500 ₴ вище за 20 000 ₴'
-		);
+		expect(plain(reasonText(reason('price', 'price: 22500 > 20000')))).toBe('22 500 ₴ вище за 20 000 ₴');
 	});
 	it('explains a price under the minimum', () => {
 		expect(plain(reasonText(reason('price', 'price: 3000 < 5000')))).toBe('3 000 ₴ нижче за 5 000 ₴');
@@ -186,5 +174,18 @@ describe('placeLine', () => {
 		expect(placeLine({ address: 'а', title: 'б', location: 'в' })).toBe('а');
 		expect(placeLine({ address: '', title: 'б', location: 'в' })).toBe('б');
 		expect(placeLine({ address: '', title: '', location: 'в' })).toBe('в');
+	});
+});
+
+describe('near', () => {
+	it('shows metres below a kilometre and kilometres above', () => {
+		expect(plain(distanceLabel(500))).toBe('500 м');
+		expect(plain(distanceLabel(1000))).toBe('1 км');
+		expect(plain(distanceLabel(1500))).toBe('1,5 км');
+	});
+
+	it('lists the place among the criteria', () => {
+		const lines = criteria(watch({ near: { name: 'Дніпровська набережна', radiusMeters: 1000 } }));
+		expect(lines.map(plain)).toContain('біля «Дніпровська набережна», 1 км');
 	});
 });

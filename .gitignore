@@ -3,3 +3,6 @@
 *.db-wal
 *.db-shm
 /internal/ui/dist/
+
+# Local secrets
+.env

@@ -25,6 +25,9 @@ type Server struct {
 	Refresh func(watchID string)
 	// Areas lists and validates city areas. Without it, areas cannot be chosen.
 	Areas AreaDirectory
+	// Places resolves place names and keeps the Google key. Without it, a
+	// watch cannot search near a place.
+	Places PlaceResolver
 }
 
 // AreaDirectory is what the API needs from the area directory.
@@ -42,6 +45,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/areas", s.areas)
 	mux.HandleFunc("POST /api/watches", s.createWatch)
 	mux.HandleFunc("PATCH /api/watches/{id}", s.updateWatch)
+	mux.HandleFunc("GET /api/settings", s.settings)
+	mux.HandleFunc("PUT /api/settings", s.updateSettings)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Add("Vary", "Origin")
@@ -51,7 +56,7 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		}
 		if r.Method == http.MethodOptions {
@@ -329,8 +334,10 @@ func sourceOrder(sourceType string) int {
 		return 0
 	case "domria":
 		return 1
-	default:
+	case "otodim":
 		return 2
+	default:
+		return 3
 	}
 }
 

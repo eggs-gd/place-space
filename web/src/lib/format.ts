@@ -1,4 +1,4 @@
-import type { Reason, Watch } from './types';
+import type { Near, Reason, Watch } from './types';
 
 const priceFormat = new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 });
 const areaFormat = new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 1 });
@@ -68,6 +68,7 @@ export function when(iso: string): string {
 export function sourceName(type: string): string {
 	if (type === 'lun') return 'LUN';
 	if (type === 'domria') return 'DOM.RIA';
+	if (type === 'otodim') return 'Otodim';
 	return type || 'Джерело';
 }
 
@@ -94,6 +95,7 @@ export function criteria(watch: Watch): string[] {
 	if (watch.deal === 'rent') lines.push('Оренда');
 	else if (watch.deal) lines.push(watch.deal);
 	if (watch.areas.length) lines.push(areaNames(watch.areas));
+	if (watch.near) lines.push(nearLabel(watch.near));
 	const currency = watch.currency || 'UAH';
 	if (watch.priceMax != null) lines.push(`≤ ${money(watch.priceMax, currency)}`);
 	if (watch.priceMin != null) lines.push(`≥ ${money(watch.priceMin, currency)}`);
@@ -101,7 +103,8 @@ export function criteria(watch: Watch): string[] {
 	if (properties.has('apartment') && properties.has('house')) lines.push('Квартира або будинок');
 	else if (properties.has('house')) lines.push('Будинок');
 	else if (properties.has('apartment') || properties.size === 0) lines.push('Квартира');
-	if (watch.roomsMin != null) lines.push(`${watch.roomsMin}+ ${plural(watch.roomsMin, 'кімната', 'кімнати', 'кімнат')}`);
+	if (watch.roomsMin != null)
+		lines.push(`${watch.roomsMin}+ ${plural(watch.roomsMin, 'кімната', 'кімнати', 'кімнат')}`);
 	if (watch.areaMin != null) lines.push(`від ${area(watch.areaMin)}`);
 	return lines;
 }
@@ -140,6 +143,15 @@ export function reasonText(reason: Reason): string {
 
 export function areaNames(areas: { name: string }[]): string {
 	return areas.map((item) => item.name).join(', ');
+}
+
+export function distanceLabel(meters: number): string {
+	if (meters < 1000) return `${meters} м`;
+	return `${areaFormat.format(meters / 1000)} км`;
+}
+
+export function nearLabel(near: Near): string {
+	return `біля «${near.name}», ${distanceLabel(near.radiusMeters)}`;
 }
 
 export function placeLine(listing: { address: string; title: string; location: string }): string {

@@ -32,6 +32,7 @@ type watchJSON struct {
 	Deal                string           `json:"deal"`
 	Properties          []string         `json:"properties"`
 	Areas               []domain.AreaRef `json:"areas"`
+	Near                *nearJSON        `json:"near"`
 	PriceMin            *int64           `json:"priceMin"`
 	PriceMax            *int64           `json:"priceMax"`
 	Currency            string           `json:"currency"`

@@ -1,16 +1,14 @@
 <script>
-	const windows =
-		'https://github.com/eggs-gd/place-space/releases/latest/download/place-space.exe';
-	const mac =
-		'https://github.com/eggs-gd/place-space/releases/latest/download/place-space-macos.zip';
+	const windows = 'https://github.com/eggs-gd/place-space/releases/latest/download/place-space.exe';
+	const mac = 'https://github.com/eggs-gd/place-space/releases/latest/download/place-space-macos.zip';
 </script>
 
 <main class="shell">
 	<p class="brand">Place Space</p>
 	<h1>Оренда, яка з’являється сама</h1>
 	<p class="lead">
-		Локальна програма перевіряє LUN і DOM.RIA та показує оголошення у ваших межах. Нові — ті, що
-		з’явилися за останню добу. База лишається на вашому комп’ютері.
+		Локальна програма перевіряє LUN, DOM.RIA і Otodim та показує оголошення у ваших межах. Нові — ті, що з’явилися за
+		останню добу. База лишається на вашому комп’ютері.
 	</p>
 	<div class="actions">
 		<a class="button" href={windows}>Завантажити для Windows</a>
