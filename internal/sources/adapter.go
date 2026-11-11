@@ -30,6 +30,17 @@ type NearSearcher interface {
 	SearchesNear()
 }
 
+// Locator is implemented by adapters whose catalog omits coordinates that the
+// listing's own page has.
+type Locator interface {
+	Locate(ctx context.Context, listing domain.Listing) (lat, lng float64, err error)
+}
+
+// PlacePointer is implemented by adapters that can tell where a Google place is.
+type PlacePointer interface {
+	PlaceCenter(ctx context.Context, placeID string) (lat, lng float64, err error)
+}
+
 // RawListing is one provider payload before normalization.
 type RawListing struct {
 	ExternalID string

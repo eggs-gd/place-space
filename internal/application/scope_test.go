@@ -28,17 +28,17 @@ func TestScopeNearAPlace(t *testing.T) {
 	watch := domain.Watch{Query: domain.Query{City: "Київ", Near: near}}
 	source := domain.Source{ID: "s"}
 
-	if _, ok := p.scope(context.Background(), watch, source, plainAdapter{}); ok {
-		t.Fatal("a source without distance search read the whole city")
+	if _, _, ok := p.scope(context.Background(), watch, source, plainAdapter{}); ok {
+		t.Fatal("a source without a place index read the whole city unchecked")
 	}
-	scoped, ok := p.scope(context.Background(), watch, source, nearAdapter{})
+	scoped, _, ok := p.scope(context.Background(), watch, source, nearAdapter{})
 	if !ok || scoped.Query.Near != near {
 		t.Fatalf("near source: ok=%v query %+v", ok, scoped.Query)
 	}
 
 	watch.Query.Areas = []domain.AreaRef{{Key: "поділ", Name: "Поділ"}}
-	scoped, ok = p.scope(context.Background(), watch, source, nearAdapter{})
-	if !ok || len(scoped.Query.Areas) != 0 {
-		t.Fatalf("near source kept areas it cannot read: %+v", scoped.Query)
+	scoped, _, ok = p.scope(context.Background(), watch, source, nearAdapter{})
+	if ok {
+		t.Fatalf("near source checked areas without a place index: %+v", scoped.Query)
 	}
 }

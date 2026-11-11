@@ -121,6 +121,7 @@ func Open(ctx context.Context, opts Options) (*Core, error) {
 			Adapters: adapters,
 			Rates:    rateSource,
 			Areas:    &application.AreaDirectory{Store: store, Adapters: adapters, Log: log},
+			Places:   &application.PlaceIndex{Store: store},
 			Now:      opts.Now,
 			Log:      log,
 		},
@@ -147,7 +148,7 @@ func (c *Core) Close() error {
 
 // Handler serves the API and, in builds with the interface, the pages.
 func (c *Core) Handler() http.Handler {
-	api := &httpapi.Server{Store: c.Store, Refresh: c.Scheduler.Refresh, Areas: c.Pipeline.Areas, Places: c.Places}
+	api := &httpapi.Server{Store: c.Store, Refresh: c.Scheduler.Refresh, Areas: c.Pipeline.Areas, Places: c.Places, PlacePoint: c.Pipeline.PlacePoint}
 	return ui.Mount(api.Handler(), ui.Assets())
 }
 

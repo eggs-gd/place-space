@@ -45,6 +45,8 @@ type ClassifyInput struct {
 	FetchErrors []string
 	Rates       domain.Rates
 	Normalize   func(sources.RawListing) (domain.Listing, error)
+	// Place adds the area and distance checks the catalog could not do. It may be nil.
+	Place func(domain.Listing) []domain.Reason
 }
 
 // Classify decides what is new, changed, unchanged, rejected, or duplicated.
@@ -147,6 +149,9 @@ func Classify(in ClassifyInput) (Classified, error) {
 		}
 
 		item.Decision = domain.Apply(in.Watch.Filters, listing, in.Rates)
+		if in.Place != nil {
+			item.Decision = item.Decision.With(in.Place(listing)...)
+		}
 		if item.Decision.Status == domain.MatchMatched {
 			run.Matched++
 		} else {
