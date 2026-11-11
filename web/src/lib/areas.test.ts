@@ -30,9 +30,7 @@ describe('areaTree', () => {
 		expect(tree.others).toEqual([]);
 	});
 	it('keeps all areas of a matching district', () => {
-		expect(areaTree(options, 'дарн').districts).toEqual([
-			{ area: darnytskyi, children: [osokorky, pozniaky] }
-		]);
+		expect(areaTree(options, 'дарн').districts).toEqual([{ area: darnytskyi, children: [osokorky, pozniaky] }]);
 	});
 	it('ignores case and apostrophe style', () => {
 		expect(areaTree(options, "СОЛОМ'Я").others).toEqual([solomianka]);
@@ -48,10 +46,7 @@ describe('selection', () => {
 		expect(toggleArea(['осокорки'], osokorky, false, options)).toEqual([]);
 	});
 	it('lets a district absorb its areas', () => {
-		expect(toggleArea(['осокорки', 'десь', 'позняки'], darnytskyi, true, options)).toEqual([
-			'десь',
-			'дарницький'
-		]);
+		expect(toggleArea(['осокорки', 'десь', 'позняки'], darnytskyi, true, options)).toEqual(['десь', 'дарницький']);
 	});
 	it('does not add an area already inside a chosen district', () => {
 		expect(isCovered(osokorky, ['дарницький'])).toBe(true);

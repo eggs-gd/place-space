@@ -1,13 +1,5 @@
 <script lang="ts">
-	import {
-		ago,
-		facts,
-		money,
-		placeLine,
-		reasonText,
-		sourceName,
-		when
-	} from '$lib/format';
+	import { ago, facts, money, placeLine, reasonText, sourceName, when } from '$lib/format';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -39,7 +31,12 @@
 		{#if images.length > 1}
 			<div class="thumbs">
 				{#each images as image, index (image + index)}
-					<button type="button" aria-label="Фото {index + 1}" aria-current={index === selected ? 'true' : undefined} onclick={() => (selected = index)}>
+					<button
+						type="button"
+						aria-label="Фото {index + 1}"
+						aria-current={index === selected ? 'true' : undefined}
+						onclick={() => (selected = index)}
+					>
 						<img src={image} alt="" />
 					</button>
 				{/each}

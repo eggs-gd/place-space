@@ -10,11 +10,7 @@
 
 	const watch = $derived(data.overview.watch);
 	const sources = $derived(
-		data.overview.sources?.length
-			? data.overview.sources
-			: data.overview.source
-				? [data.overview.source]
-				: []
+		data.overview.sources?.length ? data.overview.sources : data.overview.source ? [data.overview.source] : []
 	);
 	const sourceState = $derived(
 		sources.some((item) => item.status === 'error')
@@ -211,7 +207,8 @@
 	<h1>{watch?.city || watch?.name || 'Новий пошук'}</h1>
 	{#if watch}
 		<p class="watching">
-			<span class="dot" class:live={watch.enabled && sourceState === 'healthy'} class:bad={sourceState === 'error'}></span>
+			<span class="dot" class:live={watch.enabled && sourceState === 'healthy'} class:bad={sourceState === 'error'}
+			></span>
 			{watch.enabled ? 'Стежить' : 'Зупинено'}
 		</p>
 	{/if}
@@ -296,8 +293,7 @@
 		{#if sources.length}
 			{#each sources as source (source.id)}
 				<p class="watching">
-					<span class="dot" class:live={source.status === 'healthy'} class:bad={source.status === 'error'}
-					></span>
+					<span class="dot" class:live={source.status === 'healthy'} class:bad={source.status === 'error'}></span>
 					{sourceName(source.type)} · {sourceStatus(source.status, source.lastError)}
 				</p>
 				{#if source.lastError}
@@ -337,8 +333,8 @@
 <section class="panel">
 	<h2>Ключ Google</h2>
 	<p class="note">
-		Потрібен лише для пошуку біля адреси: Google перетворює назву місця на його ідентифікатор. Програма
-		просить тільки ідентифікатор, а такі запити в Google безкоштовні.
+		Потрібен лише для пошуку біля адреси: Google перетворює назву місця на його ідентифікатор. Програма просить тільки
+		ідентифікатор, а такі запити в Google безкоштовні.
 	</p>
 	{#if keyState.set}
 		<p class="note">
@@ -377,4 +373,3 @@
 		{/if}
 	</form>
 </section>
-

@@ -103,7 +103,8 @@ export function criteria(watch: Watch): string[] {
 	if (properties.has('apartment') && properties.has('house')) lines.push('Квартира або будинок');
 	else if (properties.has('house')) lines.push('Будинок');
 	else if (properties.has('apartment') || properties.size === 0) lines.push('Квартира');
-	if (watch.roomsMin != null) lines.push(`${watch.roomsMin}+ ${plural(watch.roomsMin, 'кімната', 'кімнати', 'кімнат')}`);
+	if (watch.roomsMin != null)
+		lines.push(`${watch.roomsMin}+ ${plural(watch.roomsMin, 'кімната', 'кімнати', 'кімнат')}`);
 	if (watch.areaMin != null) lines.push(`від ${area(watch.areaMin)}`);
 	return lines;
 }
