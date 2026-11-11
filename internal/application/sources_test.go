@@ -36,7 +36,7 @@ func TestEnsureDefaultSourcesKeepsExistingOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ids) != 2 || ids[0] != "lun" || ids[1] != "domria" {
+	if len(ids) != 3 || ids[0] != "lun" || ids[1] != "domria" || ids[2] != "otodim" {
 		t.Fatalf("ids %v", ids)
 	}
 	watches, err := store.ListWatches(ctx)
@@ -47,7 +47,7 @@ func TestEnsureDefaultSourcesKeepsExistingOrder(t *testing.T) {
 	for _, id := range watches[0].SourceIDs {
 		got[id] = true
 	}
-	if len(watches) != 1 || !got["lun"] || !got["domria"] {
+	if len(watches) != 1 || !got["lun"] || !got["domria"] || !got["otodim"] {
 		t.Fatalf("sources %v", watches[0].SourceIDs)
 	}
 	if watches[0].Query.City != "Кам'янець-Подільський" {

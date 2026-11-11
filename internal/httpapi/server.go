@@ -329,8 +329,10 @@ func sourceOrder(sourceType string) int {
 		return 0
 	case "domria":
 		return 1
-	default:
+	case "otodim":
 		return 2
+	default:
+		return 3
 	}
 }
 

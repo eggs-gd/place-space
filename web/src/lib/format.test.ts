@@ -104,6 +104,7 @@ describe('source labels', () => {
 	it('names known sources', () => {
 		expect(sourceName('lun')).toBe('LUN');
 		expect(sourceName('domria')).toBe('DOM.RIA');
+		expect(sourceName('otodim')).toBe('Otodim');
 		expect(sourceName('')).toBe('Джерело');
 	});
 	it('describes status', () => {

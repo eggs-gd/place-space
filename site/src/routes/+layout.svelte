@@ -8,7 +8,7 @@
 	<title>Place Space</title>
 	<meta
 		name="description"
-		content="Локальний монітор оренди. Перевіряє LUN і DOM.RIA та показує оголошення у ваших межах."
+		content="Локальний монітор оренди. Перевіряє LUN, DOM.RIA і Otodim та показує оголошення у ваших межах."
 	/>
 </svelte:head>
 

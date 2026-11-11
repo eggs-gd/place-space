@@ -20,6 +20,7 @@ import (
 	"github.com/eggs-gd/place-space/internal/sources"
 	"github.com/eggs-gd/place-space/internal/sources/domria"
 	"github.com/eggs-gd/place-space/internal/sources/lun"
+	"github.com/eggs-gd/place-space/internal/sources/otodim"
 	"github.com/eggs-gd/place-space/internal/storage/sqlite"
 	"github.com/eggs-gd/place-space/internal/ui"
 )
@@ -33,7 +34,7 @@ type Options struct {
 	DBPath string
 	// Pages limits search pages per catalog; zero means DefaultPages.
 	Pages int
-	// Adapters replace the built-in LUN and DOM.RIA adapters, for tests.
+	// Adapters replace the built-in adapters, for tests.
 	Adapters map[string]sources.Adapter
 	// Rates replaces the NBU exchange rates, for tests.
 	Rates application.RateSource
@@ -102,6 +103,8 @@ func Open(ctx context.Context, opts Options) (*Core, error) {
 		adapters = map[string]sources.Adapter{
 			"lun":    lun.New(lun.Options{MaxPages: pages}),
 			"domria": domria.New(domria.Options{MaxPages: pages}),
+			// Otodim keeps its own, lower limit: its pages are much heavier.
+			"otodim": otodim.New(otodim.Options{}),
 		}
 	}
 	rateSource := opts.Rates

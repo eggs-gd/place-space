@@ -69,6 +69,7 @@ func openTestCore(t *testing.T, now *clock) *Core {
 		Adapters: map[string]sources.Adapter{
 			"lun":    stubAdapter{kind: "lun", count: 2},
 			"domria": stubAdapter{kind: "domria", count: 1},
+			"otodim": stubAdapter{kind: "otodim"},
 		},
 		Rates: noRates{},
 		Now:   now.Now,

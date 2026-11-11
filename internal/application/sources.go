@@ -7,7 +7,7 @@ import (
 	"github.com/eggs-gd/place-space/internal/storage/sqlite"
 )
 
-// EnsureDefaultSources stores LUN and DOM.RIA and attaches any that a watch
+// EnsureDefaultSources stores the built-in sources and attaches any that a watch
 // does not already have. Sources a watch already lists stay in their order.
 func EnsureDefaultSources(ctx context.Context, store *sqlite.Store) ([]string, error) {
 	ids := make([]string, 0, len(defaultSourceRows))
@@ -38,6 +38,7 @@ func EnsureDefaultSources(ctx context.Context, store *sqlite.Store) ([]string, e
 var defaultSourceRows = []domain.Source{
 	{ID: "lun", Type: "lun", Enabled: true, Status: domain.SourceUnknown, Configuration: []byte(`{}`)},
 	{ID: "domria", Type: "domria", Enabled: true, Status: domain.SourceUnknown, Configuration: []byte(`{}`)},
+	{ID: "otodim", Type: "otodim", Enabled: true, Status: domain.SourceUnknown, Configuration: []byte(`{}`)},
 }
 
 func mergeSourceIDs(have, extra []string) ([]string, bool) {

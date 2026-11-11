@@ -68,6 +68,7 @@ export function when(iso: string): string {
 export function sourceName(type: string): string {
 	if (type === 'lun') return 'LUN';
 	if (type === 'domria') return 'DOM.RIA';
+	if (type === 'otodim') return 'Otodim';
 	return type || 'Джерело';
 }
 
