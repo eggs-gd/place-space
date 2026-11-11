@@ -21,11 +21,15 @@ type Pipeline struct {
 	Adapters map[string]sources.Adapter
 	Rates    RateSource
 	Areas    *AreaDirectory
-	Now      func() time.Time
-	Log      *slog.Logger
+	// Places maps points to areas. Without it, sources cannot be checked by
+	// area or distance on their own.
+	Places *PlaceIndex
+	Now    func() time.Time
+	Log    *slog.Logger
 
 	mu      sync.Mutex
 	blocked map[string]time.Time
+	points  map[string][2]float64
 }
 
 // blockCooldown is how long a source rests after refusing a request. Polling
@@ -77,11 +81,11 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 			p.log().Info("skip resting source", "source", source.ID)
 			continue
 		}
-		scoped, ok := p.scope(ctx, watch, source, adapter)
+		scoped, check, ok := p.scope(ctx, watch, source, adapter)
 		if !ok {
 			continue
 		}
-		runReport, err := p.pollSource(ctx, scoped, source, adapter, rates)
+		runReport, err := p.pollSource(ctx, scoped, check, source, adapter, rates)
 		if errors.Is(err, sqlite.ErrWatchChanged) {
 			p.log().Info("drop poll for changed watch", "watch", watch.Name, "source", source.ID)
 			return report, nil
@@ -95,41 +99,115 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 	return report, nil
 }
 
-// scope narrows the watch to what this source can search. A source that can
-// search around a place does so when the watch names one. Otherwise the
-// watch's areas resolve to this source's catalog pages. It reports false when
-// the source has nothing to read: falling back to the whole city would fill
-// the feed with places the person excluded.
-func (p *Pipeline) scope(ctx context.Context, watch domain.Watch, source domain.Source, adapter sources.Adapter) (domain.Watch, bool) {
-	if watch.Query.Near != nil {
-		if _, ok := adapter.(sources.NearSearcher); ok {
-			watch.Query.Areas = nil
-			return watch, true
+// scope decides what this source reads and what is checked afterwards. A
+// source reads the narrowest catalog it has: the circle around the place, the
+// chosen areas' pages, the districts around the place, or the whole city.
+// Whatever the catalog cannot guarantee is checked per listing by area or
+// distance. It reports false when the source cannot honour the watch:
+// falling back to the whole city unchecked would fill the feed with places
+// the person excluded.
+func (p *Pipeline) scope(ctx context.Context, watch domain.Watch, source domain.Source, adapter sources.Adapter) (domain.Watch, placeCheck, bool) {
+	query := watch.Query
+	check := placeCheck{city: query.City}
+	_, searchesNear := adapter.(sources.NearSearcher)
+
+	if searchesNear {
+		if query.Near == nil && len(query.Areas) == 0 {
+			return watch, check, true
 		}
-		if len(watch.Query.Areas) == 0 {
-			p.log().Info("source cannot search near a place", "source", source.ID, "watch", watch.Name)
-			return watch, false
+		if len(query.Areas) > 0 {
+			if p.Places == nil {
+				p.log().Info("source cannot check areas", "source", source.ID, "watch", watch.Name)
+				return watch, check, false
+			}
+			check.areas = areaSet(query.Areas)
+			check.names = p.areaNames(ctx, query.City)
 		}
+		watch.Query.Areas = nil
+		return watch, check, true
+	}
+
+	if query.Near != nil {
+		near := *query.Near
+		if !near.HasPoint() {
+			if lat, lng, ok := p.PlacePoint(ctx, near.PlaceID); ok {
+				near.Latitude, near.Longitude = &lat, &lng
+			}
+		}
+		if !near.HasPoint() || p.Places == nil {
+			p.log().Info("source cannot check distance", "source", source.ID, "watch", watch.Name)
+			return watch, check, false
+		}
+		check.near = &near
 		watch.Query.Near = nil
 	}
-	if len(watch.Query.Areas) == 0 {
-		return watch, true
+	areas := query.Areas
+	if len(areas) == 0 && check.near != nil {
+		keys, err := p.Places.DistrictsAround(ctx, query.City, *check.near.Latitude, *check.near.Longitude, float64(check.near.RadiusMeters)/1000)
+		if err != nil {
+			p.log().Warn("districts around place", "watch", watch.Name, "err", err)
+		}
+		for _, key := range keys {
+			areas = append(areas, domain.AreaRef{Key: key, Name: key})
+		}
+		if len(areas) == 0 {
+			// Nothing is known around the place: read the city, newest first,
+			// and let the distance check keep what is close.
+			return watch, check, true
+		}
+	}
+	if len(areas) == 0 {
+		return watch, check, true
 	}
 	if p.Areas == nil {
 		p.log().Warn("watch has areas but no directory", "watch", watch.Name)
-		return watch, false
+		return watch, check, false
 	}
-	paths, err := p.Areas.Paths(ctx, source.Type, watch.Query.City, watch.Query.Areas)
+	paths, err := p.Areas.Paths(ctx, source.Type, query.City, areas)
 	if err != nil {
 		p.log().Warn("load area paths", "source", source.ID, "err", err)
-		return watch, false
+		return watch, check, false
 	}
 	if len(paths) == 0 {
 		p.log().Info("source has none of the areas", "source", source.ID, "watch", watch.Name)
-		return watch, false
+		return watch, check, false
 	}
+	watch.Query.Areas = areas
 	watch.Query.AreaPaths = paths
-	return watch, true
+	return watch, check, true
+}
+
+// PlacePoint returns the centre of a Google place, asking the first adapter
+// that knows. Results are kept for the life of the pipeline.
+func (p *Pipeline) PlacePoint(ctx context.Context, placeID string) (float64, float64, bool) {
+	if placeID == "" {
+		return 0, 0, false
+	}
+	p.mu.Lock()
+	point, ok := p.points[placeID]
+	p.mu.Unlock()
+	if ok {
+		return point[0], point[1], true
+	}
+	for _, adapter := range p.Adapters {
+		pointer, ok := adapter.(sources.PlacePointer)
+		if !ok {
+			continue
+		}
+		lat, lng, err := pointer.PlaceCenter(ctx, placeID)
+		if err != nil {
+			p.log().Warn("place centre", "source", adapter.Type(), "err", err)
+			continue
+		}
+		p.mu.Lock()
+		if p.points == nil {
+			p.points = map[string][2]float64{}
+		}
+		p.points[placeID] = [2]float64{lat, lng}
+		p.mu.Unlock()
+		return lat, lng, true
+	}
+	return 0, 0, false
 }
 
 func (p *Pipeline) resting(sourceID string) bool {
@@ -155,7 +233,7 @@ func (p *Pipeline) rest(sourceID string) {
 	p.blocked[sourceID] = p.now().Add(blockCooldown)
 }
 
-func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source domain.Source, adapter sources.Adapter, rates domain.Rates) (Classified, error) {
+func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, check placeCheck, source domain.Source, adapter sources.Adapter, rates domain.Rates) (Classified, error) {
 	started := p.now()
 	raws, fetchErr := adapter.Fetch(ctx, watch.Query)
 	var fetchErrors []string
@@ -171,11 +249,13 @@ func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source do
 
 	externalIDs := make([]string, 0, len(raws))
 	urls := make([]string, 0, len(raws))
+	normalized := make([]domain.Listing, 0, len(raws))
 	for _, raw := range raws {
 		listing, err := adapter.Normalize(ctx, raw)
 		if err != nil {
 			continue
 		}
+		normalized = append(normalized, listing)
 		externalIDs = append(externalIDs, listing.ExternalID)
 		if listing.URL != "" {
 			urls = append(urls, listing.URL)
@@ -186,6 +266,7 @@ func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source do
 	if err != nil {
 		return Classified{}, fmt.Errorf("load listings: %w", err)
 	}
+	points := p.locate(ctx, check, source, adapter, watch.Filters, rates, normalized, existing)
 	matches, err := p.Store.MatchesForWatch(ctx, watch.ID)
 	if err != nil {
 		return Classified{}, fmt.Errorf("load matches: %w", err)
@@ -201,7 +282,16 @@ func (p *Pipeline) pollSource(ctx context.Context, watch domain.Watch, source do
 		FetchErrors: fetchErrors,
 		Rates:       rates,
 		Normalize: func(raw sources.RawListing) (domain.Listing, error) {
-			return adapter.Normalize(ctx, raw)
+			listing, err := adapter.Normalize(ctx, raw)
+			if err == nil && listing.Location.Latitude == nil {
+				if point, ok := points[listing.ExternalID]; ok {
+					listing.Location.Latitude, listing.Location.Longitude = &point[0], &point[1]
+				}
+			}
+			return listing, err
+		},
+		Place: func(listing domain.Listing) []domain.Reason {
+			return p.placeReasons(ctx, check, listing)
 		},
 	})
 	if err != nil {

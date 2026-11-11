@@ -97,7 +97,9 @@ func (s *Server) resolveNear(w http.ResponseWriter, r *http.Request, watch *doma
 		return false
 	}
 	if previous != nil && previous.PlaceID != "" && strings.EqualFold(previous.Name, name) && watch.Query.City == previousCity {
-		watch.Query.Near = &domain.Near{Name: name, PlaceID: previous.PlaceID, RadiusMeters: radius}
+		watch.Query.Near = &domain.Near{Name: name, PlaceID: previous.PlaceID, RadiusMeters: radius,
+			Latitude: previous.Latitude, Longitude: previous.Longitude}
+		s.pointNear(r.Context(), watch.Query.Near)
 		return true
 	}
 	if s.Places == nil {
@@ -120,7 +122,19 @@ func (s *Server) resolveNear(w http.ResponseWriter, r *http.Request, watch *doma
 		return false
 	}
 	watch.Query.Near = &domain.Near{Name: name, PlaceID: id, RadiusMeters: radius}
+	s.pointNear(r.Context(), watch.Query.Near)
 	return true
+}
+
+// pointNear stores the place's centre when it can be found. Without it the
+// watch still works where a source searches by place; others find it later.
+func (s *Server) pointNear(ctx context.Context, near *domain.Near) {
+	if near.HasPoint() || s.PlacePoint == nil {
+		return
+	}
+	if lat, lng, ok := s.PlacePoint(ctx, near.PlaceID); ok {
+		near.Latitude, near.Longitude = &lat, &lng
+	}
 }
 
 // placeQuery adds the city, so a street name finds the street in that city.

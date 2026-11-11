@@ -28,6 +28,9 @@ type Server struct {
 	// Places resolves place names and keeps the Google key. Without it, a
 	// watch cannot search near a place.
 	Places PlaceResolver
+	// PlacePoint finds the centre of a resolved place, so that sources
+	// without distance search can measure distance. It may be nil.
+	PlacePoint func(ctx context.Context, placeID string) (lat, lng float64, ok bool)
 }
 
 // AreaDirectory is what the API needs from the area directory.

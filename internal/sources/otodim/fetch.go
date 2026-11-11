@@ -244,16 +244,6 @@ func (a *Adapter) load(ctx context.Context, endpoint *url.URL) ([]byte, error) {
 }
 
 func extractCatalog(body []byte) ([]json.RawMessage, int, error) {
-	const marker = `id="__NEXT_DATA__"`
-	html := string(body)
-	index := strings.Index(html, marker)
-	if index < 0 {
-		return nil, 0, fmt.Errorf("embedded listings payload not found")
-	}
-	start := strings.IndexByte(html[index:], '>')
-	if start < 0 {
-		return nil, 0, fmt.Errorf("embedded listings payload not found")
-	}
 	var state struct {
 		Props struct {
 			PageProps struct {
@@ -268,8 +258,7 @@ func extractCatalog(body []byte) ([]json.RawMessage, int, error) {
 			} `json:"pageProps"`
 		} `json:"props"`
 	}
-	decoder := json.NewDecoder(strings.NewReader(html[index+start+1:]))
-	if err := decoder.Decode(&state); err != nil {
+	if err := decodeNextData(body, &state); err != nil {
 		return nil, 0, fmt.Errorf("decode listings: %w", err)
 	}
 	ads := state.Props.PageProps.Data.SearchAds

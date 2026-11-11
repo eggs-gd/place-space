@@ -189,3 +189,17 @@ describe('near', () => {
 		expect(lines.map(plain)).toContain('біля «Дніпровська набережна», 1 км');
 	});
 });
+
+describe('place reasons', () => {
+	it('explains distance', () => {
+		expect(plain(reasonText(reason('distance', 'distance: 0.42 <= 1.00', true)))).toBe('420 м від адреси');
+		expect(plain(reasonText(reason('distance', 'distance: 2.34 > 1.00')))).toBe('2,3 км від адреси, потрібно до 1 км');
+		expect(reasonText(reason('distance', 'distance: unknown'))).toBe('відстань невідома: оголошення без координат');
+	});
+
+	it('explains areas', () => {
+		expect(reasonText(reason('place', 'area: Дарницький', true))).toBe('Дарницький');
+		expect(reasonText(reason('place', 'area: Оболонський'))).toBe('Оболонський, не серед обраних районів');
+		expect(reasonText(reason('place', 'area: unknown'))).toBe('район невідомий');
+	});
+});

@@ -58,6 +58,10 @@ type Near struct {
 	// PlaceID is the Google Places id the name resolved to.
 	PlaceID      string `json:"placeId"`
 	RadiusMeters int    `json:"radiusMeters"`
+	// Latitude and Longitude are the centre of the place, when known. Sources
+	// without distance search need them to filter by distance themselves.
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
 }
 
 // Filters are deterministic predicates applied after normalization.

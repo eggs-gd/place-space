@@ -110,6 +110,8 @@ export function criteria(watch: Watch): string[] {
 }
 
 export function reasonText(reason: Reason): string {
+	const place = placeReasonText(reason);
+	if (place) return place;
 	const compared = reason.message.match(/^(price|rooms|area): ([0-9.]+) (<=|>=|<|>) ([0-9.]+)$/);
 	if (compared) {
 		const field = compared[1];
@@ -143,6 +145,23 @@ export function reasonText(reason: Reason): string {
 
 export function areaNames(areas: { name: string }[]): string {
 	return areas.map((item) => item.name).join(', ');
+}
+
+function placeReasonText(reason: Reason): string {
+	if (reason.field === 'distance') {
+		if (reason.message === 'distance: unknown') return 'відстань невідома: оголошення без координат';
+		const measured = reason.message.match(/^distance: ([0-9.]+) (<=|>) ([0-9.]+)$/);
+		if (!measured) return '';
+		const away = distanceLabel(Math.round(Number(measured[1]) * 100) * 10);
+		if (measured[2] === '<=') return `${away} від адреси`;
+		return `${away} від адреси, потрібно до ${distanceLabel(Math.round(Number(measured[3]) * 1000))}`;
+	}
+	if (reason.field === 'place') {
+		const name = reason.message.replace(/^area: /, '');
+		if (name === 'unknown') return 'район невідомий';
+		return reason.passed ? name : `${name}, не серед обраних районів`;
+	}
+	return '';
 }
 
 export function distanceLabel(meters: number): string {
