@@ -24,6 +24,12 @@ type AreaReader interface {
 	Areas(ctx context.Context, city string) ([]domain.Area, error)
 }
 
+// NearSearcher is implemented by adapters that can search around a place, given
+// its Google Places id and a radius.
+type NearSearcher interface {
+	SearchesNear()
+}
+
 // RawListing is one provider payload before normalization.
 type RawListing struct {
 	ExternalID string

@@ -2,7 +2,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import AreaPicker from '$lib/AreaPicker.svelte';
 	import { loadAreas, sendJSON } from '$lib/api';
-	import { ago, sourceName, sourceStatus } from '$lib/format';
+	import { ago, distanceLabel, sourceName, sourceStatus } from '$lib/format';
 	import type { AreaOption, Watch } from '$lib/types';
 	import type { PageData } from './$types';
 
@@ -42,6 +42,14 @@
 	let areasError = $state('');
 	let loadedCity = '';
 	let areasRequest = 0;
+	let nearName = $state('');
+	let nearRadius = $state('1000');
+	let keyInput = $state('');
+	let keySaving = $state(false);
+	let keyNotice = $state('');
+
+	const radii = [300, 500, 1000, 2000, 3000, 5000];
+	const keyState = $derived(data.settings.googleKey);
 
 	const areaNames = $derived(Object.fromEntries((watch?.areas ?? []).map((item) => [item.key, item.name])));
 
@@ -96,6 +104,7 @@
 					watch.areaMin,
 					watch.properties.join(','),
 					watch.areas.map((item) => item.key).join(','),
+					watch.near ? `${watch.near.name}@${watch.near.radiusMeters}` : '',
 					watch.enabled
 				].join('|')
 			: 'new';
@@ -114,8 +123,12 @@
 			property = 'apartment';
 			enabled = true;
 			areas = [];
+			nearName = '';
+			nearRadius = '1000';
 			return;
 		}
+		nearName = current.near?.name ?? '';
+		nearRadius = String(current.near?.radiusMeters ?? 1000);
 		city = current.city;
 		areas = current.areas.map((item) => item.key);
 		refreshAreas(current.city);
@@ -142,6 +155,21 @@
 		return value;
 	}
 
+	async function storeKey(value: string) {
+		keySaving = true;
+		keyNotice = '';
+		try {
+			await sendJSON('PUT', '/api/settings', { googleKey: value });
+			keyInput = '';
+			keyNotice = value ? 'Ключ перевірено і збережено.' : 'Ключ прибрано.';
+			await invalidateAll();
+		} catch (err) {
+			keyNotice = err instanceof Error ? err.message : 'Не вдалося зберегти ключ';
+		} finally {
+			keySaving = false;
+		}
+	}
+
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
 		saving = true;
@@ -155,6 +183,7 @@
 				areaMin: blankNumber(areaMin),
 				properties: property === 'both' ? ['apartment', 'house'] : [property],
 				areas,
+				near: nearName.trim() ? { name: nearName.trim(), radiusMeters: Number(nearRadius) } : null,
 				enabled
 			};
 			if (watch) {
@@ -202,6 +231,26 @@
 			error={areasError}
 			onedit={() => (editing = true)}
 		/>
+	{/if}
+	<div class="near">
+		<label>
+			Біля адреси
+			<input name="near" bind:value={nearName} placeholder="вулиця, будинок чи місце" autocomplete="off" />
+		</label>
+		<label>
+			Радіус
+			<select name="nearRadius" bind:value={nearRadius}>
+				{#each radii as radius (radius)}
+					<option value={String(radius)}>{distanceLabel(radius)}</option>
+				{/each}
+			</select>
+		</label>
+	</div>
+	{#if nearName.trim()}
+		<p class="note">
+			Біля адреси шукає лише Otodim: LUN і DOM.RIA радіуса не мають і без районів цей пошук пропускають.
+			{#if !keyState.set}Потрібен ключ Google, його можна вказати внизу сторінки.{/if}
+		</p>
 	{/if}
 	<label>
 		Ціна до, ₴
@@ -284,3 +333,48 @@
 		{/if}
 	</section>
 {/if}
+
+<section class="panel">
+	<h2>Ключ Google</h2>
+	<p class="note">
+		Потрібен лише для пошуку біля адреси: Google перетворює назву місця на його ідентифікатор. Програма
+		просить тільки ідентифікатор, а такі запити в Google безкоштовні.
+	</p>
+	{#if keyState.set}
+		<p class="note">
+			{keyState.fromEnv ? 'Ключ береться зі змінної GAPI_KEY' : 'Ключ збережено'}, закінчується на
+			<code>{keyState.hint}</code>.
+		</p>
+	{/if}
+	<form
+		class="editor"
+		onsubmit={(event) => {
+			event.preventDefault();
+			storeKey(keyInput.trim());
+		}}
+	>
+		<label>
+			{keyState.set ? 'Новий ключ' : 'Ключ'}
+			<input
+				name="googleKey"
+				type="password"
+				bind:value={keyInput}
+				autocomplete="off"
+				spellcheck="false"
+				placeholder="AIza…"
+			/>
+		</label>
+		<div class="actions">
+			<button type="submit" disabled={keySaving || !keyInput.trim()}>Перевірити і зберегти</button>
+			{#if keyState.set && !keyState.fromEnv}
+				<button type="button" class="secondary" disabled={keySaving} onclick={() => storeKey('')}>
+					Прибрати ключ
+				</button>
+			{/if}
+		</div>
+		{#if keyNotice}
+			<p class="note" role="status">{keyNotice}</p>
+		{/if}
+	</form>
+</section>
+

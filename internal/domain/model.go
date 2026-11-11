@@ -47,6 +47,17 @@ type Query struct {
 	Areas []AreaRef `json:"areas,omitempty"`
 	// AreaPaths is the current source's catalog pages for Areas, set per poll.
 	AreaPaths []string `json:"-"`
+	// Near narrows the search to a circle around one place. Only sources that
+	// can search by distance use it; the others skip the watch.
+	Near *Near `json:"near,omitempty"`
+}
+
+// Near is a place and a distance from it, as typed by the person.
+type Near struct {
+	Name string `json:"name"`
+	// PlaceID is the Google Places id the name resolved to.
+	PlaceID      string `json:"placeId"`
+	RadiusMeters int    `json:"radiusMeters"`
 }
 
 // Filters are deterministic predicates applied after normalization.

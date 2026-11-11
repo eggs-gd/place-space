@@ -1,4 +1,4 @@
-import type { Reason, Watch } from './types';
+import type { Near, Reason, Watch } from './types';
 
 const priceFormat = new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 });
 const areaFormat = new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 1 });
@@ -95,6 +95,7 @@ export function criteria(watch: Watch): string[] {
 	if (watch.deal === 'rent') lines.push('Оренда');
 	else if (watch.deal) lines.push(watch.deal);
 	if (watch.areas.length) lines.push(areaNames(watch.areas));
+	if (watch.near) lines.push(nearLabel(watch.near));
 	const currency = watch.currency || 'UAH';
 	if (watch.priceMax != null) lines.push(`≤ ${money(watch.priceMax, currency)}`);
 	if (watch.priceMin != null) lines.push(`≥ ${money(watch.priceMin, currency)}`);
@@ -141,6 +142,15 @@ export function reasonText(reason: Reason): string {
 
 export function areaNames(areas: { name: string }[]): string {
 	return areas.map((item) => item.name).join(', ');
+}
+
+export function distanceLabel(meters: number): string {
+	if (meters < 1000) return `${meters} м`;
+	return `${areaFormat.format(meters / 1000)} км`;
+}
+
+export function nearLabel(near: Near): string {
+	return `біля «${near.name}», ${distanceLabel(near.radiusMeters)}`;
 }
 
 export function placeLine(listing: { address: string; title: string; location: string }): string {

@@ -15,6 +15,7 @@ import (
 	"github.com/eggs-gd/place-space/internal/application"
 	"github.com/eggs-gd/place-space/internal/domain"
 	"github.com/eggs-gd/place-space/internal/httpapi"
+	"github.com/eggs-gd/place-space/internal/places"
 	"github.com/eggs-gd/place-space/internal/rates"
 	"github.com/eggs-gd/place-space/internal/scheduler"
 	"github.com/eggs-gd/place-space/internal/sources"
@@ -50,6 +51,8 @@ type Core struct {
 	Scheduler *scheduler.Scheduler
 	// SourceIDs are the sources new watches check.
 	SourceIDs []string
+	// Places resolves place names with the stored Google key.
+	Places *places.Resolver
 
 	log *slog.Logger
 	now func() time.Time
@@ -122,6 +125,7 @@ func Open(ctx context.Context, opts Options) (*Core, error) {
 			Log:      log,
 		},
 		SourceIDs: sourceIDs,
+		Places:    &places.Resolver{Settings: store},
 		log:       log,
 		now:       now,
 		polling:   map[string]struct{}{},
@@ -143,7 +147,7 @@ func (c *Core) Close() error {
 
 // Handler serves the API and, in builds with the interface, the pages.
 func (c *Core) Handler() http.Handler {
-	api := &httpapi.Server{Store: c.Store, Refresh: c.Scheduler.Refresh, Areas: c.Pipeline.Areas}
+	api := &httpapi.Server{Store: c.Store, Refresh: c.Scheduler.Refresh, Areas: c.Pipeline.Areas, Places: c.Places}
 	return ui.Mount(api.Handler(), ui.Assets())
 }
 

@@ -12,7 +12,8 @@ import {
 	reasonText,
 	roomsLabel,
 	sourceName,
-	sourceStatus
+	sourceStatus,
+	distanceLabel
 } from './format';
 import type { Reason, Watch } from './types';
 
@@ -32,6 +33,7 @@ function watch(overrides: Partial<Watch>): Watch {
 		deal: 'rent',
 		properties: ['apartment'],
 		areas: [],
+		near: null,
 		priceMin: null,
 		priceMax: null,
 		currency: '',
@@ -187,5 +189,18 @@ describe('placeLine', () => {
 		expect(placeLine({ address: 'а', title: 'б', location: 'в' })).toBe('а');
 		expect(placeLine({ address: '', title: 'б', location: 'в' })).toBe('б');
 		expect(placeLine({ address: '', title: '', location: 'в' })).toBe('в');
+	});
+});
+
+describe('near', () => {
+	it('shows metres below a kilometre and kilometres above', () => {
+		expect(plain(distanceLabel(500))).toBe('500 м');
+		expect(plain(distanceLabel(1000))).toBe('1 км');
+		expect(plain(distanceLabel(1500))).toBe('1,5 км');
+	});
+
+	it('lists the place among the criteria', () => {
+		const lines = criteria(watch({ near: { name: 'Дніпровська набережна', radiusMeters: 1000 } }));
+		expect(lines.map(plain)).toContain('біля «Дніпровська набережна», 1 км');
 	});
 });

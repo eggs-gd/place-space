@@ -478,3 +478,21 @@ h1 {
 		scroll-behavior: auto !important;
 	}
 }
+
+.editor .near {
+	display: grid;
+	grid-template-columns: 1fr 7rem;
+	gap: 12px;
+}
+
+.editor .actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.editor button.secondary {
+	color: #1d1d1f;
+	background: transparent;
+	box-shadow: inset 0 0 0 1px #c7c7cc;
+}

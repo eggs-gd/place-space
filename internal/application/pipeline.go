@@ -77,7 +77,7 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 			p.log().Info("skip resting source", "source", source.ID)
 			continue
 		}
-		scoped, ok := p.scope(ctx, watch, source)
+		scoped, ok := p.scope(ctx, watch, source, adapter)
 		if !ok {
 			continue
 		}
@@ -95,10 +95,23 @@ func (p *Pipeline) PollWatch(ctx context.Context, watch domain.Watch) (Report, e
 	return report, nil
 }
 
-// scope resolves the watch's areas to this source's catalog pages. It reports
-// false when the source has nothing to read: falling back to the whole city
-// would fill the feed with places the person excluded.
-func (p *Pipeline) scope(ctx context.Context, watch domain.Watch, source domain.Source) (domain.Watch, bool) {
+// scope narrows the watch to what this source can search. A source that can
+// search around a place does so when the watch names one. Otherwise the
+// watch's areas resolve to this source's catalog pages. It reports false when
+// the source has nothing to read: falling back to the whole city would fill
+// the feed with places the person excluded.
+func (p *Pipeline) scope(ctx context.Context, watch domain.Watch, source domain.Source, adapter sources.Adapter) (domain.Watch, bool) {
+	if watch.Query.Near != nil {
+		if _, ok := adapter.(sources.NearSearcher); ok {
+			watch.Query.Areas = nil
+			return watch, true
+		}
+		if len(watch.Query.Areas) == 0 {
+			p.log().Info("source cannot search near a place", "source", source.ID, "watch", watch.Name)
+			return watch, false
+		}
+		watch.Query.Near = nil
+	}
 	if len(watch.Query.Areas) == 0 {
 		return watch, true
 	}

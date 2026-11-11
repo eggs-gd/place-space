@@ -170,9 +170,47 @@ func TestSearchPaths(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || len(paths) != 1 || paths[0] != tc.want {
+			if err != nil || len(paths) != 1 || paths[0].path != tc.want {
 				t.Fatalf("paths %v err %v", paths, err)
 			}
 		})
+	}
+}
+
+func TestFetchNearAPlace(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path+" "+r.URL.Query().Get("placeId")+" "+r.URL.Query().Get("distanceRadius")+" "+r.URL.Query().Get("by"))
+		_, _ = w.Write([]byte(page(1, 1)))
+	}))
+	defer server.Close()
+	_, err := newAdapter(server, 1).Fetch(context.Background(), domain.Query{
+		City:       "Київ",
+		Properties: []string{domain.PropertyApartment, domain.PropertyHouse},
+		Near:       &domain.Near{Name: "Поділ", PlaceID: "ChIJ26L7ANfa1EARS0Dp8jarxS4", RadiusMeters: 1500},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"/uk/rezultaty/orenda/kvartyry/vsia-ukraina ChIJ26L7ANfa1EARS0Dp8jarxS4 1500 LATEST",
+		"/uk/rezultaty/orenda/budynky/vsia-ukraina ChIJ26L7ANfa1EARS0Dp8jarxS4 1500 LATEST",
+	}
+	if strings.Join(requests, "|") != strings.Join(want, "|") {
+		t.Fatalf("requests %v", requests)
+	}
+}
+
+func TestSearchNearRejectsBadInput(t *testing.T) {
+	for _, near := range []domain.Near{
+		{Name: "x", PlaceID: "short", RadiusMeters: 1000},
+		{Name: "x", PlaceID: "ChIJ26L7ANfa1EAR&page=9", RadiusMeters: 1000},
+		{Name: "x", PlaceID: "ChIJ26L7ANfa1EARS0Dp8jarxS4", RadiusMeters: 0},
+		{Name: "x", PlaceID: "ChIJ26L7ANfa1EARS0Dp8jarxS4", RadiusMeters: 60_000},
+	} {
+		near := near
+		if paths, err := searchPaths(domain.Query{City: "Київ", Near: &near}); err == nil {
+			t.Fatalf("%+v accepted: %v", near, paths)
+		}
 	}
 }

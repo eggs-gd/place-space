@@ -21,7 +21,24 @@ const (
 	maxBody      = 8 << 20
 	flatsPrefix  = "/uk/rezultaty/orenda/kvartyry/"
 	housesPrefix = "/uk/rezultaty/orenda/budynky/"
+	// wholeCountry is the location a search around a place goes with: the
+	// place's own circle does the narrowing.
+	wholeCountry = "vsia-ukraina"
+	// Otodim's form offers radii up to a few kilometres.
+	maxRadiusMeters = 50_000
 )
+
+// placeID is the shape of a Google Places id.
+var placeID = regexp.MustCompile(`^[A-Za-z0-9_-]{10,400}$`)
+
+// SearchesNear marks the adapter as able to search around a place.
+func (a *Adapter) SearchesNear() {}
+
+// target is one catalog to read and the filter it carries.
+type target struct {
+	path   string
+	params url.Values
+}
 
 // catalogPath is the only shape of path requested from Otodim. A city can be
 // typed by a person as a path.
@@ -49,22 +66,37 @@ func (a *Adapter) Fetch(ctx context.Context, query domain.Query) ([]sources.RawL
 	return out, errors.Join(errs...)
 }
 
-func searchPaths(query domain.Query) ([]string, error) {
+func searchPaths(query domain.Query) ([]target, error) {
 	if query.Deal != "" && query.Deal != domain.DealRent {
 		return nil, fmt.Errorf("otodim: unsupported deal %q", query.Deal)
 	}
-	if len(query.Areas) > 0 {
+	params := url.Values{}
+	var base string
+	switch {
+	case query.Near != nil:
+		near := query.Near
+		if !placeID.MatchString(near.PlaceID) {
+			return nil, fmt.Errorf("otodim: invalid place id for %q", near.Name)
+		}
+		if near.RadiusMeters <= 0 || near.RadiusMeters > maxRadiusMeters {
+			return nil, fmt.Errorf("otodim: radius %d m is out of range", near.RadiusMeters)
+		}
+		base = flatsPrefix + wholeCountry
+		params.Set("placeId", near.PlaceID)
+		params.Set("distanceRadius", strconv.Itoa(near.RadiusMeters))
+	case len(query.Areas) > 0:
 		return nil, fmt.Errorf("otodim: areas are not supported")
-	}
-	base, err := cityPath(query.City)
-	if err != nil {
-		return nil, err
+	default:
+		var err error
+		if base, err = cityPath(query.City); err != nil {
+			return nil, err
+		}
 	}
 	properties := query.Properties
 	if len(properties) == 0 {
 		properties = []string{domain.PropertyApartment}
 	}
-	var paths []string
+	var paths []target
 	seen := map[string]struct{}{}
 	for _, property := range properties {
 		path, err := propertyPath(base, property)
@@ -75,7 +107,7 @@ func searchPaths(query domain.Query) ([]string, error) {
 			continue
 		}
 		seen[path] = struct{}{}
-		paths = append(paths, path)
+		paths = append(paths, target{path: path, params: params})
 	}
 	return paths, nil
 }
@@ -109,7 +141,7 @@ func propertyPath(base, property string) (string, error) {
 	}
 }
 
-func (a *Adapter) fetchPath(ctx context.Context, path string, seen map[string]struct{}) ([]sources.RawListing, error) {
+func (a *Adapter) fetchPath(ctx context.Context, path target, seen map[string]struct{}) ([]sources.RawListing, error) {
 	var (
 		out     []sources.RawListing
 		errs    []error
@@ -156,12 +188,15 @@ func (a *Adapter) fetchPath(ctx context.Context, path string, seen map[string]st
 	return out, errors.Join(errs...)
 }
 
-func (a *Adapter) fetchPage(ctx context.Context, path string, page int) ([]json.RawMessage, int, error) {
-	endpoint, err := url.Parse(a.baseURL + path)
+func (a *Adapter) fetchPage(ctx context.Context, path target, page int) ([]json.RawMessage, int, error) {
+	endpoint, err := url.Parse(a.baseURL + path.path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("otodim: build url: %w", err)
 	}
 	query := url.Values{"by": {"LATEST"}, "direction": {"DESC"}}
+	for key, values := range path.params {
+		query[key] = values
+	}
 	if page > 1 {
 		query.Set("page", strconv.Itoa(page))
 	}

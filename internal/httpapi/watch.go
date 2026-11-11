@@ -15,14 +15,15 @@ import (
 const defaultPollInterval = 10 * time.Minute
 
 type criteriaBody struct {
-	City       string   `json:"city"`
-	PriceMin   *int64   `json:"priceMin"`
-	PriceMax   *int64   `json:"priceMax"`
-	RoomsMin   *int     `json:"roomsMin"`
-	AreaMin    *float64 `json:"areaMin"`
-	Properties []string `json:"properties"`
-	Areas      []string `json:"areas"`
-	Enabled    *bool    `json:"enabled"`
+	City       string    `json:"city"`
+	PriceMin   *int64    `json:"priceMin"`
+	PriceMax   *int64    `json:"priceMax"`
+	RoomsMin   *int      `json:"roomsMin"`
+	AreaMin    *float64  `json:"areaMin"`
+	Properties []string  `json:"properties"`
+	Areas      []string  `json:"areas"`
+	Near       *nearBody `json:"near"`
+	Enabled    *bool     `json:"enabled"`
 }
 
 type areasBody struct {
@@ -84,6 +85,9 @@ func (s *Server) createWatch(w http.ResponseWriter, r *http.Request) {
 	if !s.resolveAreas(w, r, &watch, body.Areas) {
 		return
 	}
+	if !s.resolveNear(w, r, &watch, body.Near, nil, "") {
+		return
+	}
 	sourceIDs, err := application.EnsureDefaultSources(r.Context(), s.Store)
 	if err != nil {
 		writeError(w, err)
@@ -123,6 +127,9 @@ func (s *Server) updateWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.resolveAreas(w, r, &updated, body.Areas) {
+		return
+	}
+	if !s.resolveNear(w, r, &updated, body.Near, current.Query.Near, current.Query.City) {
 		return
 	}
 	if err := s.Store.UpdateWatch(r.Context(), updated); err != nil {
@@ -211,6 +218,12 @@ func queryChanged(before, after domain.Query) bool {
 	if len(before.Properties) != len(after.Properties) || len(before.Areas) != len(after.Areas) {
 		return true
 	}
+	if (before.Near == nil) != (after.Near == nil) {
+		return true
+	}
+	if before.Near != nil && (before.Near.PlaceID != after.Near.PlaceID || before.Near.RadiusMeters != after.Near.RadiusMeters) {
+		return true
+	}
 	areas := make(map[string]struct{}, len(before.Areas))
 	for _, area := range before.Areas {
 		areas[area.Key] = struct{}{}
@@ -263,6 +276,7 @@ func watchBody(watch domain.Watch) watchJSON {
 	}
 	return watchJSON{
 		Areas:               areas,
+		Near:                nearView(watch.Query.Near),
 		ID:                  watch.ID,
 		Name:                watch.Name,
 		Enabled:             watch.Enabled,
