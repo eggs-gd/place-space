@@ -27,8 +27,11 @@ const (
 
 // Watch is a saved monitoring request.
 type Watch struct {
-	ID           string
-	Name         string
+	ID   string
+	Name string
+	// ProfileID is the person the watch belongs to on a shared install. It
+	// is empty when the install has no profiles.
+	ProfileID    string
 	Enabled      bool
 	SourceIDs    []string
 	Query        Query

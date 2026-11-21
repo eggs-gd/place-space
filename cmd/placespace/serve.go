@@ -23,6 +23,7 @@ func cmdServe(args []string) error {
 	addr := fs.String("addr", "127.0.0.1:8080", "адреса API")
 	pages := fs.Int("pages", core.DefaultPages, "максимум сторінок пошуку на кожен тип житла")
 	open := fs.Bool("open", false, "відкрити інтерфейс у власному вікні")
+	profiles := fs.Bool("profiles", false, "окремі пошуки для кожного, хто відкриває інтерфейс (для спільного сервера)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -50,7 +51,7 @@ func cmdServe(args []string) error {
 		return err
 	}
 	slog.Info("database", "path", location.path)
-	app, err := core.Open(ctx, core.Options{DBPath: location.path, Pages: *pages})
+	app, err := core.Open(ctx, core.Options{DBPath: location.path, Pages: *pages, Profiles: *profiles})
 	if err != nil {
 		return err
 	}

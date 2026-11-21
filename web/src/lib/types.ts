@@ -128,3 +128,14 @@ export type Feed = {
 	status: string;
 	items: Card[];
 };
+
+export type Profile = {
+	id: string;
+	name: string;
+};
+
+export type Profiles = {
+	enabled: boolean;
+	current: Profile | null;
+	profiles: Profile[];
+};

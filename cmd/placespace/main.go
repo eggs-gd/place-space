@@ -39,6 +39,8 @@ func main() {
 		err = cmdStatus(os.Args[2:])
 	case "serve":
 		err = cmdServe(os.Args[2:])
+	case "health":
+		err = cmdHealth(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -60,11 +62,13 @@ func usage() {
   placespace serve
   placespace run
   placespace status
+  placespace health --addr 127.0.0.1:8080
 
 Без аргументів програма відкриває власне вікно і сама перевіряє пошуки.
 poll створює або оновлює пошук і одразу перевіряє джерела.
 serve робить те саме, що запуск без аргументів, але вікно не відкриває.
 run перевіряє джерела без HTTP.
+health перевіряє, що запущений serve відповідає; для контейнерів.
 `)
 }
 
