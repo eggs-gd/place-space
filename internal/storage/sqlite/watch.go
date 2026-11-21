@@ -45,9 +45,9 @@ func (s *Store) CreateWatch(ctx context.Context, watch domain.Watch) (domain.Wat
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT INTO watches (
-		id, name, enabled, query_json, filters_json, poll_interval_seconds, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		watch.ID, watch.Name, boolInt(watch.Enabled), queryJSON, filtersJSON,
+		id, name, profile_id, enabled, query_json, filters_json, poll_interval_seconds, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		watch.ID, watch.Name, nullString(watch.ProfileID), boolInt(watch.Enabled), queryJSON, filtersJSON,
 		intervalSeconds(watch.PollInterval), formatTime(watch.CreatedAt), formatTime(watch.UpdatedAt),
 	)
 	if err != nil {
@@ -149,9 +149,10 @@ func (s *Store) GetWatch(ctx context.Context, watchID string) (domain.Watch, err
 	return watch, nil
 }
 
-// FindWatchByName loads one watch by its unique name.
+// FindWatchByName loads the watch of that name that belongs to no profile,
+// as the command line creates them.
 func (s *Store) FindWatchByName(ctx context.Context, name string) (domain.Watch, bool, error) {
-	row := s.db.QueryRowContext(ctx, watchSelect+` WHERE w.name = ?`, name)
+	row := s.db.QueryRowContext(ctx, watchSelect+` WHERE w.name = ? AND w.profile_id IS NULL`, name)
 	watch, err := scanWatch(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Watch{}, false, nil
@@ -198,7 +199,7 @@ func (s *Store) ListWatches(ctx context.Context) ([]domain.Watch, error) {
 	return watches, nil
 }
 
-const watchSelect = `SELECT w.id, w.name, w.enabled, w.query_json, w.filters_json, w.poll_interval_seconds, w.created_at, w.updated_at FROM watches w`
+const watchSelect = `SELECT w.id, w.name, w.profile_id, w.enabled, w.query_json, w.filters_json, w.poll_interval_seconds, w.created_at, w.updated_at FROM watches w`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -207,6 +208,7 @@ type rowScanner interface {
 func scanWatch(row rowScanner) (domain.Watch, error) {
 	var (
 		watch   domain.Watch
+		profile sql.NullString
 		enabled int
 		query   string
 		filters string
@@ -214,9 +216,10 @@ func scanWatch(row rowScanner) (domain.Watch, error) {
 		created string
 		updated string
 	)
-	if err := row.Scan(&watch.ID, &watch.Name, &enabled, &query, &filters, &seconds, &created, &updated); err != nil {
+	if err := row.Scan(&watch.ID, &watch.Name, &profile, &enabled, &query, &filters, &seconds, &created, &updated); err != nil {
 		return domain.Watch{}, err
 	}
+	watch.ProfileID = profile.String
 	watch.Enabled = enabled == 1
 	if err := json.Unmarshal([]byte(query), &watch.Query); err != nil {
 		return domain.Watch{}, fmt.Errorf("decode query: %w", err)

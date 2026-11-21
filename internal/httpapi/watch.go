@@ -74,6 +74,7 @@ func (s *Server) createWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	watch, err := applyCriteria(domain.Watch{
+		ProfileID:    requestProfile(r),
 		Enabled:      true,
 		Query:        domain.Query{Deal: domain.DealRent},
 		PollInterval: defaultPollInterval,
@@ -113,6 +114,9 @@ func (s *Server) updateWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current, err := s.Store.GetWatch(r.Context(), r.PathValue("id"))
+	if err == nil && !s.owns(r, current) {
+		err = sqlite.ErrNotFound
+	}
 	if errors.Is(err, sqlite.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, errorBody{Error: "пошук не знайдено"})
 		return

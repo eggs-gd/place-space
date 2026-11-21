@@ -1,0 +1,20 @@
+# docker compose up -d, then open http://<this machine>:8080 from any device
+# on the network.
+services:
+  place-space:
+    image: ghcr.io/eggs-gd/place-space:latest
+    # To build from this checkout instead: comment out image, uncomment build.
+    # build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - place-space:/data
+    environment:
+      # Optional: the Google key for near-address search. It can also be set
+      # in the interface.
+      GAPI_KEY: ${GAPI_KEY:-}
+      TZ: Europe/Kyiv
+    restart: unless-stopped
+
+volumes:
+  place-space:

@@ -13,14 +13,13 @@
 </script>
 
 <svelte:head>
-	<title>{title} · Place Space</title>
+	<title>{watch ? `${title} · Place Space` : 'Place Space'}</title>
 </svelte:head>
 
 {#if !watch}
 	<section class="empty">
 		<h1>Поки порожньо</h1>
-		<p>Пошук ще не створено. У терміналі, з каталогу проєкту:</p>
-		<p><code>go run ./cmd/placespace poll --city "Кам'янець-Подільський" --price-max 20000 --rooms-min 2</code></p>
+		<p>Пошук ще не створено. Оберіть місто й ціну в <a href="/watch">критеріях</a>.</p>
 	</section>
 {:else}
 	<div class="heading">

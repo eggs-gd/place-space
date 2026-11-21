@@ -42,6 +42,9 @@ type Options struct {
 	// Now replaces the clock, for tests.
 	Now func() time.Time
 	Log *slog.Logger
+	// Profiles keeps each person's watches apart, for an install that
+	// several people share.
+	Profiles bool
 }
 
 // Core owns one open database and everything that works on it.
@@ -54,8 +57,9 @@ type Core struct {
 	// Places resolves place names with the stored Google key.
 	Places *places.Resolver
 
-	log *slog.Logger
-	now func() time.Time
+	log      *slog.Logger
+	now      func() time.Time
+	profiles bool
 
 	mu      sync.Mutex
 	polling map[string]struct{}
@@ -129,6 +133,7 @@ func Open(ctx context.Context, opts Options) (*Core, error) {
 		Places:    &places.Resolver{Settings: store},
 		log:       log,
 		now:       now,
+		profiles:  opts.Profiles,
 		polling:   map[string]struct{}{},
 	}
 	c.Scheduler = scheduler.New(store.ListWatches, func(ctx context.Context, watch domain.Watch) error {
@@ -148,7 +153,7 @@ func (c *Core) Close() error {
 
 // Handler serves the API and, in builds with the interface, the pages.
 func (c *Core) Handler() http.Handler {
-	api := &httpapi.Server{Store: c.Store, Refresh: c.Scheduler.Refresh, Areas: c.Pipeline.Areas, Places: c.Places, PlacePoint: c.Pipeline.PlacePoint}
+	api := &httpapi.Server{Store: c.Store, Refresh: c.Scheduler.Refresh, Areas: c.Pipeline.Areas, Places: c.Places, PlacePoint: c.Pipeline.PlacePoint, Profiles: c.profiles}
 	return ui.Mount(api.Handler(), ui.Assets())
 }
 

@@ -1,0 +1,85 @@
+name: Docker
+
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # Every pull request builds the image and checks that it starts, serves the
+  # interface and asks for a profile.
+  smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: place-space:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start
+        run: docker run -d --name place-space -p 8080:8080 place-space:test
+
+      - name: Check
+        run: |
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' place-space)
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          docker inspect -f '{{.State.Health.Status}}' place-space | grep -qx healthy
+          curl -fsS http://127.0.0.1:8080/api/profiles | grep -q '"enabled":true'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/overview)" = 401
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<html'
+
+      - name: Logs
+        if: always()
+        run: docker logs place-space
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

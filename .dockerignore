@@ -1,0 +1,15 @@
+.git
+.github
+.claude
+.env
+data
+site
+docs
+packaging
+**/node_modules
+web/.svelte-kit
+web/build
+internal/ui/dist
+*.db
+*.db-wal
+*.db-shm

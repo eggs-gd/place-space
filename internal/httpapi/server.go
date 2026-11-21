@@ -31,6 +31,9 @@ type Server struct {
 	// PlacePoint finds the centre of a resolved place, so that sources
 	// without distance search can measure distance. It may be nil.
 	PlacePoint func(ctx context.Context, placeID string) (lat, lng float64, ok bool)
+	// Profiles keeps each person's watches apart on a shared install. Every
+	// request then needs a chosen profile.
+	Profiles bool
 }
 
 // AreaDirectory is what the API needs from the area directory.
@@ -50,6 +53,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/watches/{id}", s.updateWatch)
 	mux.HandleFunc("GET /api/settings", s.settings)
 	mux.HandleFunc("PUT /api/settings", s.updateSettings)
+	mux.HandleFunc("GET /api/profiles", s.profiles)
+	mux.HandleFunc("POST /api/profiles", s.createProfile)
+	mux.HandleFunc("POST /api/profiles/{id}/select", s.selectProfile)
+	mux.HandleFunc("DELETE /api/profiles/current", s.leaveProfile)
+	scoped := s.withProfile(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Add("Vary", "Origin")
@@ -59,14 +67,14 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		mux.ServeHTTP(w, r)
+		scoped.ServeHTTP(w, r)
 	})
 }
 
@@ -148,10 +156,20 @@ func (s *Server) listing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	match, _, err := s.Store.MatchForListing(r.Context(), listing.ID, r.URL.Query().Get("watch"))
+	// The decision shown is the one for the reader's own search. Listings
+	// are shared, decisions are not.
+	watch, found, err := s.currentWatch(r)
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	var match domain.Match
+	if found || !s.Profiles {
+		match, _, err = s.Store.MatchForListing(r.Context(), listing.ID, watch.ID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	observations, err := s.Store.Observations(r.Context(), listing.ID)
 	if err != nil {
@@ -274,11 +292,20 @@ func (s *Server) currentWatch(r *http.Request) (domain.Watch, bool, error) {
 		if err != nil {
 			return domain.Watch{}, false, err
 		}
+		if !s.owns(r, watch) {
+			return domain.Watch{}, false, nil
+		}
 		return watch, true, nil
 	}
-	watches, err := s.Store.ListWatches(r.Context())
+	all, err := s.Store.ListWatches(r.Context())
 	if err != nil {
 		return domain.Watch{}, false, err
+	}
+	watches := make([]domain.Watch, 0, len(all))
+	for _, watch := range all {
+		if s.owns(r, watch) {
+			watches = append(watches, watch)
+		}
 	}
 	for _, watch := range watches {
 		if watch.Enabled {
