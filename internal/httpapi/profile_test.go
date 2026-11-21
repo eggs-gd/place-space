@@ -187,3 +187,31 @@ func TestWithoutProfilesEverythingIsShared(t *testing.T) {
 		t.Fatalf("create without the option = %d", status)
 	}
 }
+
+func TestProfileCookieSecureOnlyOverHTTPS(t *testing.T) {
+	store := openProfileStore(t)
+	handler := (&Server{Store: store, Profiles: true}).Handler()
+	cases := []struct {
+		name   string
+		proto  string
+		secure bool
+	}{
+		{"plain HTTP", "", false},
+		{"behind an HTTPS proxy", "https", true},
+	}
+	for i, c := range cases {
+		req := httptest.NewRequest("POST", "/api/profiles", bytes.NewReader([]byte(`{"name":"`+c.name+`"}`)))
+		if c.proto != "" {
+			req.Header.Set("X-Forwarded-Proto", c.proto)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		cookies := rec.Result().Cookies()
+		if rec.Code != http.StatusCreated || len(cookies) != 1 {
+			t.Fatalf("case %d: %d %v", i, rec.Code, cookies)
+		}
+		if cookies[0].Secure != c.secure {
+			t.Fatalf("%s: Secure = %v", c.name, cookies[0].Secure)
+		}
+	}
+}

@@ -1,11 +1,9 @@
-import { dev } from '$app/environment';
 import { env } from '$env/dynamic/public';
 import { error } from '@sveltejs/kit';
 import type { AreaOption, Profiles } from './types';
 
 export function apiOrigin(): string {
 	if (env.PUBLIC_API_ORIGIN) return env.PUBLIC_API_ORIGIN.replace(/\/$/, '');
-	if (dev) return 'http://127.0.0.1:8080';
 	return '';
 }
 

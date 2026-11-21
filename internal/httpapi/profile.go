@@ -143,7 +143,7 @@ func (s *Server) createProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	setProfileCookie(w, profile.ID)
+	setProfileCookie(w, r, profile.ID)
 	writeJSON(w, http.StatusCreated, profileJSON{ID: profile.ID, Name: profile.Name})
 }
 
@@ -161,22 +161,38 @@ func (s *Server) selectProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	setProfileCookie(w, profile.ID)
+	setProfileCookie(w, r, profile.ID)
 	writeJSON(w, http.StatusOK, profileJSON{ID: profile.ID, Name: profile.Name})
 }
 
 func (s *Server) leaveProfile(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: profileCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{
+		Name:     profileCookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   overHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func setProfileCookie(w http.ResponseWriter, profileID string) {
+func setProfileCookie(w http.ResponseWriter, r *http.Request, profileID string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     profileCookie,
 		Value:    profileID,
 		Path:     "/",
 		MaxAge:   int(profileCookieAge.Seconds()),
 		HttpOnly: true,
+		Secure:   overHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// overHTTPS reports whether the browser reached the server over HTTPS,
+// directly or through a proxy that terminates it. On a home network the
+// server is usually plain HTTP, where a Secure cookie would never come back.
+func overHTTPS(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
