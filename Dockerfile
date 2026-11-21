@@ -19,7 +19,7 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/internal/ui/dist ./internal/ui/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -tags ui -trimpath -ldflags "-s -w" -o /out/placespace ./cmd/placespace
+    go build -tags "ui headless" -trimpath -ldflags "-s -w" -o /out/placespace ./cmd/placespace
 # The image runs as nonroot; a fresh volume copies this directory's owner.
 RUN mkdir -p /out/data
 
